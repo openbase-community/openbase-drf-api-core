@@ -197,7 +197,11 @@ else:
     }
 
 STATICFILES_DIRS = [BASE_DIR / "static"]
-EMAIL_BACKEND = "config.email.ResendEmailBackend"
+EMAIL_BACKEND = (
+    "django.core.mail.backends.console.EmailBackend"
+    if DEBUG
+    else "config.email.ResendEmailBackend"
+)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -291,40 +295,52 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
 AUTH_USER_MODEL = "users.User"
 
-REDIS_URL = os.environ["REDIS_URL"]
-if not DEBUG and REDIS_URL.startswith("rediss://"):
-    REDIS_URL = f"{REDIS_URL}{'&' if '?' in REDIS_URL else '?'}ssl_cert_reqs=none"
-REDIS_HOST = urlparse(REDIS_URL).hostname
-REDIS_PORT = urlparse(REDIS_URL).port
+REDIS_URL = os.environ.get("REDIS_URL", "")
 BROKER_URL = REDIS_URL
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [
-                (
+if DEBUG:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "wellness-navigator-dev",
+        },
+    }
+else:
+    REDIS_URL = os.environ["REDIS_URL"]
+    if REDIS_URL.startswith("rediss://"):
+        REDIS_URL = f"{REDIS_URL}{'&' if '?' in REDIS_URL else '?'}ssl_cert_reqs=none"
+    REDIS_HOST = urlparse(REDIS_URL).hostname
+    REDIS_PORT = urlparse(REDIS_URL).port
+    BROKER_URL = REDIS_URL
+
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [
                     {
                         "address": REDIS_URL,
                         "ssl_cert_reqs": None,
-                    }
-                    if not DEBUG
-                    else (REDIS_HOST, REDIS_PORT)
-                ),
-            ],
+                    },
+                ],
+            },
         },
-    },
-}
+    }
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL,
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
         },
-    },
-}
+    }
 
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -342,20 +358,17 @@ if not DEBUG:
     CORS_ALLOWED_ORIGINS = CSRF_TRUSTED_ORIGINS.copy()
     CORS_ALLOWED_ORIGINS.insert(0, f"https://{AWS_S3_CUSTOM_DOMAIN}")
 else:
-    CSRF_TRUSTED_ORIGINS = [
-        "http://localhost:3000",
-        "http://0.0.0.0:8000",
+    _debug_ports = [3000, 4173, 5173, *range(8000, 8090)]
+    _debug_origins = {
         "http://localhost",
-        "http://localhost:8080",
-        "http://localhost:8081",
-    ]
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
+        "http://127.0.0.1",
         "http://0.0.0.0:8000",
-        "http://localhost",
-        "http://localhost:8080",
-        "http://localhost:8081",
-    ]
+    }
+    for port in _debug_ports:
+        _debug_origins.add(f"http://localhost:{port}")
+        _debug_origins.add(f"http://127.0.0.1:{port}")
+    CSRF_TRUSTED_ORIGINS = sorted(_debug_origins)
+    CORS_ALLOWED_ORIGINS = sorted(_debug_origins)
 
 _extra_csrf_origins = [
     origin.strip()
@@ -397,7 +410,7 @@ AUTHENTICATION_BACKENDS = (
 # AllAuth settings
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_LOGIN_METHODS = {"email"}
-ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_VERIFICATION = "none" if DEBUG else "mandatory"
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
 ACCOUNT_LOGIN_BY_CODE_ENABLED = True

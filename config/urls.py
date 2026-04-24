@@ -52,8 +52,9 @@ urlpatterns = [
 
 extra_urls = allauth.headless.urls
 
-# Load site prefixes from JSON env variable
-url_prefixes = json.loads(os.environ.get("URL_PREFIXES", "{}"))
+# Load site prefixes from package settings first, then allow env overrides.
+url_prefixes = getattr(settings, "URL_PREFIXES", {}).copy()
+url_prefixes.update(json.loads(os.environ.get("URL_PREFIXES", "{}")))
 
 # Add enabled site URLs
 for app in get_installed_apps():
