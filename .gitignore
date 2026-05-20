@@ -135,8 +135,8 @@ celerybeat.pid
 # Environments
 .env
 .env.build
-.env.example
 .venv
+.uv-cache/
 env/
 venv/
 ENV/
@@ -157,6 +157,9 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Ruff
+.ruff_cache/
 
 # Pyre type checker
 .pyre/
