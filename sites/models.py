@@ -18,6 +18,11 @@ class SiteAttributes(models.Model):
         blank=True,
         help_text="The S3 folder where frontend assets are stored",
     )
+    s3_custom_domain = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional CDN domain for this site's frontend assets. Defaults to AWS_S3_CUSTOM_DOMAIN.",
+    )
     stripe_product_id = models.CharField(
         max_length=255,
         blank=True,

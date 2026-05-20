@@ -31,6 +31,7 @@ dependencies = [
     "taskiq-redis>=1.2",
     "twilio>=9.9",
     "uvicorn[standard]>=0.40",
+    "whitenoise>=6.12",
 ]
 
 [project.optional-dependencies]
@@ -43,11 +44,7 @@ dev = [
     "pytest-django>=4.11",
     "pytest-mock>=3.15",
     "taskiq[reload]>=0.12",
-    "whitenoise>=6.12",
 ]
-
-[tool.uv]
-exclude-newer = "1 week"
 
 [build-system]
 requires = ["hatchling"]

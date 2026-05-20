@@ -11,6 +11,7 @@ class SiteAttributesInline(admin.StackedInline):
     fields = (
         "admin_app_labels",
         "s3_frontend_folder",
+        "s3_custom_domain",
         "stripe_product_id",
         "stripe_price_cents",
         "from_email",

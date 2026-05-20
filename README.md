@@ -27,12 +27,12 @@ Use the sibling `deploy` repo and the `openbase-deploy` CLI for AWS/Terraform/EC
 
 Deployment metadata is stored outside the repo at:
 
-`~/.openbase/deployments/<stack-name>/<environment>/deployment.toml`
+`~/.openbase/deployments/<deployment-name>/deployment.toml`
 
 If that file does not exist for `openbase-api-core`, initialize it before building or applying:
 
 ```bash
-openbase-deploy init-stack openbase-api-core prod \
+openbase-deploy init-stack openbase-api-core \
   --web-hostname api.example.com \
   --web-hostname app.example.com \
   --cdn-hostname assets.example.com \
@@ -49,17 +49,17 @@ Repeat `--web-hostname` and `--cdn-hostname` for every domain that should point 
 Typical flow:
 
 ```bash
-openbase-deploy build openbase-api-core prod --app-dir .
-OPENBASE_DEPLOY_DB_PASSWORD='...' openbase-deploy apply openbase-api-core prod --auto-approve
-CLOUDFLARE_API_TOKEN='...' openbase-deploy cloudflare-setup openbase-api-core prod
-openbase-deploy deploy openbase-api-core prod
+openbase-deploy build openbase-api-core --app-dir .
+OPENBASE_DEPLOY_DB_PASSWORD='...' openbase-deploy apply openbase-api-core --auto-approve
+CLOUDFLARE_API_TOKEN='...' openbase-deploy cloudflare-setup openbase-api-core
+openbase-deploy deploy openbase-api-core
 ```
 
 For operator-managed app config, use SSM-backed metadata:
 
 ```bash
-openbase-deploy config set openbase-api-core prod STRIPE_SECRET_KEY
-openbase-deploy config unset openbase-api-core prod STRIPE_SECRET_KEY
+openbase-deploy config set openbase-api-core STRIPE_SECRET_KEY
+openbase-deploy config unset openbase-api-core STRIPE_SECRET_KEY
 ```
 
 Do not commit generated tfvars, local deployment metadata, or secret values.

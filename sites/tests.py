@@ -145,6 +145,74 @@ def test_ensure_default_sites_is_idempotent_when_localhost_site_already_exists()
     assert social_app.sites.filter(pk=default_site.pk).exists()
 
 
+def test_ensure_default_sites_adds_runtime_domains():
+    call_command("ensure_default_sites", "--domain", "app.example.com", "--domain", "api.example.com")
+
+    assert Site.objects.filter(domain="app.example.com", name="app.example.com").exists()
+    assert Site.objects.filter(domain="api.example.com", name="api.example.com").exists()
+    assert SiteAttributes.objects.filter(site__domain="app.example.com").exists()
+    assert SiteAttributes.objects.filter(site__domain="api.example.com").exists()
+
+
+@override_settings(ALLOWED_HOSTS=["app.example.com", "api.example.com", "localhost"])
+def test_ensure_default_sites_reads_allowed_hosts_from_environment(monkeypatch):
+    monkeypatch.setenv("ALLOWED_HOSTS", "app.example.com,api.example.com,localhost")
+
+    call_command("ensure_default_sites", "--from-allowed-hosts")
+
+    assert Site.objects.filter(domain="app.example.com", name="app.example.com").exists()
+    assert Site.objects.filter(domain="api.example.com", name="api.example.com").exists()
+    assert not Site.objects.filter(domain="localhost", name="localhost").exclude(pk=1).exists()
+
+
+def test_sync_deployment_site_creates_site_and_attributes():
+    call_command(
+        "sync_deployment_site",
+        "--domain",
+        "deploy-abc.openbase.app",
+        "--s3-custom-domain",
+        "d111111abcdef8.cloudfront.net",
+        "--s3-frontend-folder",
+        "sites/deploy-abc",
+    )
+
+    site = Site.objects.get(domain="deploy-abc.openbase.app")
+    attributes = SiteAttributes.objects.get(site=site)
+
+    assert site.name == "deploy-abc.openbase.app"
+    assert attributes.s3_custom_domain == "d111111abcdef8.cloudfront.net"
+    assert attributes.s3_frontend_folder == "sites/deploy-abc"
+    assert attributes.from_email == "team@deploy-abc.openbase.app"
+
+
+def test_sync_deployment_site_updates_existing_attributes():
+    site = Site.objects.create(domain="deploy-abc.openbase.app", name="Old Name")
+    SiteAttributes.objects.create(
+        site=site,
+        s3_custom_domain="old.cloudfront.net",
+        s3_frontend_folder="old-folder",
+        from_email="team@old.example.com",
+    )
+
+    call_command(
+        "sync_deployment_site",
+        "--domain",
+        "deploy-abc.openbase.app",
+        "--s3-custom-domain",
+        "new.cloudfront.net",
+        "--s3-frontend-folder",
+        "sites/new-folder",
+    )
+
+    site.refresh_from_db()
+    attributes = SiteAttributes.objects.get(site=site)
+
+    assert site.name == "deploy-abc.openbase.app"
+    assert attributes.s3_custom_domain == "new.cloudfront.net"
+    assert attributes.s3_frontend_folder == "sites/new-folder"
+    assert attributes.from_email == "team@deploy-abc.openbase.app"
+
+
 class _AdminTestUser:
     is_active = True
     is_staff = True

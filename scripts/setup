@@ -46,6 +46,10 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+if [ ! -t 0 ]; then
+    INTERACTIVE=0
+fi
+
 py() {
     uv run python "$@"
 }
@@ -80,11 +84,11 @@ py manage.py migrate
 
 # Check for existing superuser and ensure its development defaults
 echo "Ensuring development superuser..."
-DEV_SUPERUSER_ARGS=()
 if [ "${INTERACTIVE}" -eq 0 ]; then
-    DEV_SUPERUSER_ARGS+=(--non-interactive)
+    py manage.py ensure_dev_superuser --non-interactive
+else
+    py manage.py ensure_dev_superuser
 fi
-py manage.py ensure_dev_superuser "${DEV_SUPERUSER_ARGS[@]}"
 
 # Create default sites and site attributes
 echo "Ensuring default development sites..."
@@ -92,10 +96,10 @@ py manage.py ensure_default_sites
 
 # Check for existing Google OAuth app and create if not present
 echo "Checking for existing Google OAuth configuration..."
-GOOGLE_OAUTH_ARGS=()
 if [ "${INTERACTIVE}" -eq 0 ]; then
-    GOOGLE_OAUTH_ARGS+=(--non-interactive)
+    py manage.py ensure_google_oauth --non-interactive
+else
+    py manage.py ensure_google_oauth
 fi
-py manage.py ensure_google_oauth "${GOOGLE_OAUTH_ARGS[@]}"
 
 popd >/dev/null

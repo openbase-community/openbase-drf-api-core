@@ -1,3 +1,4 @@
+import os
 from uuid import uuid4
 
 from django.contrib.sites.models import Site
@@ -9,6 +10,20 @@ from sites.models import SiteAttributes
 
 class Command(BaseCommand):
     help = "Ensure the default local development sites and their site attributes exist."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--domain",
+            dest="domains",
+            action="append",
+            default=[],
+            help="Additional hostname to ensure in the Site table. Repeat for multiple domains.",
+        )
+        parser.add_argument(
+            "--from-allowed-hosts",
+            action="store_true",
+            help="Also ensure every hostname listed in ALLOWED_HOSTS.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -26,6 +41,13 @@ class Command(BaseCommand):
             SiteAttributes.objects.get_or_create(
                 site=site, defaults=site_attribute_defaults
             )
+
+        for domain in self._extra_domains(options):
+            site, _created = Site.objects.update_or_create(
+                domain=domain,
+                defaults={"name": domain},
+            )
+            SiteAttributes.objects.get_or_create(site=site, defaults=site_attribute_defaults)
 
         Site.objects.clear_cache()
         self.stdout.write(
@@ -106,3 +128,14 @@ class Command(BaseCommand):
 
     def _temporary_domain(self, site_id):
         return f"default-site-{site_id}-{uuid4().hex}.invalid"[:100]
+
+    def _extra_domains(self, options):
+        domains = {domain.strip().lower() for domain in options["domains"] if domain.strip()}
+        if options["from_allowed_hosts"]:
+            domains.update(
+                host.strip().lower()
+                for host in os.environ.get("ALLOWED_HOSTS", "").split(",")
+                if host.strip()
+            )
+        domains.discard("localhost")
+        return sorted(domains)

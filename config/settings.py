@@ -4,12 +4,14 @@ from urllib.parse import urlparse
 
 import dj_database_url
 import sentry_sdk
+from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR.parent / ".env")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
@@ -118,7 +120,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 DATABASES = {"default": dj_database_url.config()}
-DATABASES["default"]["CONN_MAX_AGE"] = 60
+DATABASES["default"]["CONN_MAX_AGE"] = 60 if DEBUG else 0
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -178,7 +180,7 @@ else:
     AWS_S3_CUSTOM_DOMAIN = os.environ["AWS_S3_CUSTOM_DOMAIN"]
     AWS_STORAGE_BUCKET_NAME = os.environ["AWS_STORAGE_BUCKET_NAME"]
 
-    AWS_DEFAULT_ACL = "public-read"
+    AWS_DEFAULT_ACL = None
     AWS_S3_OBJECT_PARAMETERS = {
         "CacheControl": "max-age=86400",
     }
@@ -248,6 +250,38 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "DEFAULT_GENERATOR_CLASS": "config.spectacular_generators.TitleSettingGenerator",
     "COMPONENT_SPLIT_REQUEST": True,
+    "ENUM_NAME_OVERRIDES": {
+        "WooScoreReviewTargetTypeEnum": [
+            ("teacher", "Teacher"),
+            ("lineage", "Lineage"),
+            ("retreat_center", "Retreat center"),
+            ("retreat_series", "Retreat series"),
+        ],
+        "WooScoreProfileClaimTargetTypeEnum": [
+            ("teacher", "Teacher"),
+            ("retreat_center", "Retreat center"),
+            ("lineage", "Lineage"),
+        ],
+        "WooScoreReviewStatusEnum": [
+            ("pending", "Pending moderation"),
+            ("published", "Published"),
+            ("human_review", "Human review"),
+            ("rejected", "Rejected"),
+            ("removed", "Removed"),
+        ],
+        "WooScoreProfileClaimStatusEnum": [
+            ("pending", "Pending"),
+            ("auto_verified", "Auto verified"),
+            ("manual_review", "Manual review"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ],
+        "WooScoreReviewQueueStatusEnum": [
+            ("open", "Open"),
+            ("upheld", "Upheld"),
+            ("dismissed", "Dismissed"),
+        ],
+    },
 }
 
 ASGI_APPLICATION = "config.routing.application"
@@ -337,6 +371,7 @@ _extra_cors_origins = [
 ]
 CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + _extra_csrf_origins
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + _extra_cors_origins
+CORS_ALLOW_CREDENTIALS = True
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
