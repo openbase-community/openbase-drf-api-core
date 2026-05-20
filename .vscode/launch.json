@@ -10,7 +10,7 @@
             "args": "config.asgi:application --host 0.0.0.0 --reload ${config:reloadFlags}",
             "django": true,
             "justMyCode": false,
-            "preLaunchTask": "Docker Compose Up"
+            "preLaunchTask": "Docker Compose up"
         },
         {
             "name": "Django: TaskIQ",

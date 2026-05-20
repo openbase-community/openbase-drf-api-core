@@ -1,0 +1,6 @@
+---
+globs: *.py
+alwaysApply: false
+---
+
+Use `structlog` over the python built-in logging mechanism.

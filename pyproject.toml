@@ -1,18 +1,85 @@
-target-version = "py313"
+[project]
+name = "api-core"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "adrf>=0.1",
+    "app-store-server-library>=1.9",
+    "boto3>=1.42",
+    "channels>=4.3",
+    "channels-redis>=4.3",
+    "dj-database-url>=3.1",
+    "django>=5.2",
+    "django-allauth>=65.13",
+    "django-cors-headers>=4.9",
+    "django-oauth-toolkit>=3.2",
+    "django-redis>=5.4",
+    "django-storages[s3]>=1.14",
+    "djangorestframework>=3.16",
+    "drf-spectacular>=0.29",
+    "gunicorn>=23.0",
+    "hiredis>=3.3",
+    "httpx[http2]>=0.28",
+    "pgvector>=0.4",
+    "psycopg[binary]>=3.3",
+    "python-dotenv>=1.2",
+    "redis>=7.1",
+    "resend>=2.27",
+    "sentry-sdk[django]>=2.57",
+    "stripe>=14.1",
+    "structlog>=25.5",
+    "taskiq-redis>=1.2",
+    "twilio>=9.9",
+    "uvicorn[standard]>=0.40",
+]
 
-[lint]
-preview = true
-explicit-preview-rules = true
-future-annotations = true
+[project.optional-dependencies]
+dev = [
+    "django-stubs>=5.2",
+    "django-stubs-ext>=5.2",
+    "markdown>=3.10",
+    "pygments>=2.20",
+    "pytest>=9.0",
+    "pytest-django>=4.11",
+    "pytest-mock>=3.15",
+    "taskiq[reload]>=0.12",
+    "whitenoise>=6.12",
+]
+
+[tool.uv]
+exclude-newer = "1 week"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "config",
+    "contact",
+    "payment",
+    "sites",
+    "teams",
+    "users",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"static" = "static"
+"templates" = "templates"
+
+[tool.ruff]
+target-version = "py314"
+exclude = [
+    "*/migrations/*",
+]
+
+[tool.ruff.lint]
+future-annotations = false
 select = ["ALL"]
 fixable = ["ALL"]
-
 extend-safe-fixes = [
-    "TCH",   # Allow automatic placement of imports in TYPE_CHECKING blocks.
-    "EM"     # When raising an f-string exception, move to msg first.
+    "EM",    # When raising an f-string exception, move to msg first.
 ]
-extend-select = ["TCH"]
-
 ignore = [
     "D",       # Don't enforce docstrings
     "ANN",     # Don't require type annotations
@@ -39,45 +106,24 @@ ignore = [
     "COM812",  # No need for trailing comma in argument lists,
     "PGH004",  # I want to write 'noqa' in comments sometimes without a specific rule code.
     "B027",    # This rule makes no sense if an abstract class has some no-op-by-default methods.
-    "B024",    # SimulatableEntity is abstract, but all the methods meant to be overridden are fine as no-op if by design.
     "RET505",  # I simply don't agree that this makes the code more readable.
-    "PLR6301", # We allow methods that don't use self.  These could be useful for subclasses to override.  More refactoring work is needed if not.
+    "PLR6301", # We allow methods that don't use self. These could be useful for subclasses to override. More refactoring work is needed if not.
     "CPY001",  # Don't need copyright at the top of every file.
     "S608",    # Has to do with SQL, which we never use.
+    "I002",    # from __future__ import annotations is being deprecated.
+    "TC002",   # TYPE_CHECKING is not used in 3.14
 ]
 
-# Could re-enable EM.
-exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "dist",
-    "node_modules",
-    "venv",
-    "*/migrations/*",
-]
-
-[lint.isort]
-required-imports = ["from __future__ import annotations"]
-
-
-[lint.per-file-ignores]
-"models.py" = ["PLC0415"]  # Import tasks locally
+[tool.ruff.lint.per-file-ignores]
+"models.py" = ["PLC0415", "FBT002"]  # Import tasks locally, allow signature of save()
 "views.py" = ["PLC0415"]  # Import tasks locally
-"simulation.py" = ["S101"]  # Asserts allowed
+"*/tests.py" = ["S101", "T201", "INP001"]  # Pytest asserts and prints allowed in test modules
 "*/tests/*" = ["S101", "T201", "INP001"]  # Asserts, prints allowed
 
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+addopts = "--ignore=.git --ignore=data"
+markers = [
+    "exploratory: mark a test as exploratory (run manually, not part of automated test suite)",
+]

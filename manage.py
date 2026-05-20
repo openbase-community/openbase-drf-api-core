@@ -1,19 +1,15 @@
 #!/usr/bin/env python
 """Django's command-line utility for administrative tasks."""
 
-from __future__ import annotations
-
 import os
 import sys
-from pathlib import Path
 
 # Load .env file
 try:
     from dotenv import load_dotenv
 
     # Load .env file from the web directory
-    env_path = Path(__file__).resolve().parent / ".env"
-    load_dotenv(env_path)
+    load_dotenv()
 except ImportError:
     pass  # python-dotenv not installed
 

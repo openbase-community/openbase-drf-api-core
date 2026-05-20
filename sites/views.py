@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import httpx
 from django.conf import settings
 from django.core.cache import cache
@@ -11,7 +9,6 @@ from .utils import aget_current_site_attributes
 
 async def serve_index(request, resource):
     # Check if requested type is JSON - in this case the error is likely 404
-    # NOTE: This may mess things up if we end up wanting to serve JSON files statically.
     if "application/json" in (request.META.get("HTTP_ACCEPT") or []):
         return HttpResponse(status=404)
 
@@ -44,11 +41,6 @@ async def serve_index(request, resource):
                 return HttpResponse(
                     f"Error fetching index.html from S3: {e}",
                     status=e.response.status_code,
-                )
-            except Exception as e:
-                return HttpResponse(
-                    f"Error fetching index.html from S3: {e!s}",
-                    status=500,
                 )
 
     # Manually ensure a CSRF token is generated and set the CSRF cookie

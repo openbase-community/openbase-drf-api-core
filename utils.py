@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 import subprocess
 from functools import wraps
@@ -81,4 +79,4 @@ def copy_osx(text: str) -> None:
     """
     Copy text to the clipboard on macOS.
     """
-    subprocess.run(["pbcopy"], check=False, text=True, input=text)
+    subprocess.run(["/usr/bin/pbcopy"], check=False, text=True, input=text)

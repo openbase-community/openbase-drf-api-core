@@ -1,39 +1,36 @@
-from __future__ import annotations
-
-import logging
-import os
 import time
 
 import httpx
 import jwt
+import structlog
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from sendgrid import Mail, SendGridAPIClient
+from django.core.mail import EmailMessage
 from twilio.rest import Client
 
+from config.email import get_site_from_email
 from config.taskiq_config import broker
 from users.models import UserAPNSToken
 
 required_prefix = "From your assistant: "
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 User = get_user_model()
 
 
 @broker.task
-def send_email(subject, message, to_email):
-    message = Mail(
-        from_email=f"app@{settings.DOMAIN_NAME}",
-        to_emails=to_email,
+def send_email(subject, message, to_email, site_id=None):
+    email_message = EmailMessage(
         subject=subject,
-        html_content=message,
+        body=message,
+        to=[to_email] if isinstance(to_email, str) else to_email,
+        from_email=get_site_from_email(site_id) if site_id is not None else None,
     )
-    sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
-    response = sg.send(message)
-    assert response.status_code in (202, 200)
+    email_message.content_subtype = "html"
+    email_message.send()
 
 
 @broker.task
@@ -88,4 +85,9 @@ async def send_apn(user_id, message, data: dict | None = None):
     async with httpx.AsyncClient(http2=True) as client:
         response = await client.post(apns_url, json=payload, headers=request_headers)
     if response.status_code >= 400:
-        logger.error(f"Could not send APN: {response.content}")
+        logger.error(
+            "Could not send APN",
+            status_code=response.status_code,
+            response_content=response.content.decode(errors="replace"),
+            user_id=user_id,
+        )

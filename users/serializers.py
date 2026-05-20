@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from config.serializers import BaseModelSerializer
@@ -26,8 +25,10 @@ class UserSerializer(BaseModelSerializer):
     balance = serializers.SerializerMethodField()
     active_subscription = serializers.SerializerMethodField()
 
+    @extend_schema_field(serializers.DecimalField(max_digits=10, decimal_places=2))
     def get_balance(self, obj):
         return obj.get_account().balance
 
+    @extend_schema_field(serializers.BooleanField)
     def get_active_subscription(self, obj):
         return async_to_sync(obj.active_subscription)()

@@ -1,8 +1,8 @@
-from __future__ import annotations
-
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, status
+from rest_framework import serializers as drf_serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -26,6 +26,22 @@ class APNSView(APIView):
     View for registering and unregistering APNS devices for push notifications.
     """
 
+    @extend_schema(
+        request=inline_serializer(
+            name="APNSDeviceTokenRequest",
+            fields={"token": drf_serializers.CharField()},
+        ),
+        responses={
+            200: inline_serializer(
+                name="MessageResponse",
+                fields={"message": drf_serializers.CharField()},
+            ),
+            400: inline_serializer(
+                name="ErrorResponse",
+                fields={"error": drf_serializers.CharField()},
+            ),
+        },
+    )
     def post(self, request):
         user = request.user
         token = request.data.get("token")
@@ -52,6 +68,16 @@ class APNSView(APIView):
 class DeleteUserView(APIView):
     # Commonly known as "delete-account".  This will remove the user from the system (and their associated Account object if they have one).
 
+    @extend_schema(
+        request=inline_serializer(
+            name="DeleteUserRequest",
+            fields={"confirm": drf_serializers.CharField()},
+        ),
+        responses=inline_serializer(
+            name="DeleteUserResponse",
+            fields={"message": drf_serializers.CharField()},
+        ),
+    )
     def post(self, request):
         payload = request.data
         confirm = payload.get("confirm")

@@ -2,9 +2,20 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Docker Compose Up",
+            "label": "Docker Compose up",
             "type": "shell",
             "command": "docker compose up -d",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Docker Compose down",
+            "type": "shell",
+            "command": "docker compose down",
             "presentation": {
                 "reveal": "always",
                 "panel": "new",

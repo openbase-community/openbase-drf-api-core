@@ -15,15 +15,14 @@ services:
     ports:
       - 5432:5432
 
-  nginx:
+  caddy:
     build:
-      context: ./nginx
+      context: ./caddy
       dockerfile: Dockerfile
     ports:
       - 80:80
-      - 443:443
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - PROXY_TARGET=${PROXY_TARGET:-http://host.docker.internal:8000}
-      - FRONTEND_PROXY_TARGET=${FRONTEND_PROXY_TARGET:-http://host.docker.internal:8080}
+      - PROXY_TARGET=${PROXY_TARGET:-host.docker.internal:8000}
+      - FRONTEND_PROXY_TARGET=${FRONTEND_PROXY_TARGET:-host.docker.internal:8080}

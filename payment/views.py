@@ -1,9 +1,9 @@
-import logging
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
+from functools import cache
+from pathlib import Path
 
-import pytz
 import stripe
+import structlog
 from appstoreserverlibrary.api_client import (
     APIException,
     AppStoreServerAPIClient,
@@ -32,6 +32,7 @@ from django.conf import settings
 from django.contrib.sites.shortcuts import get_current_site
 from django.http import JsonResponse
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiTypes, extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -43,7 +44,7 @@ from payment.models import Account, Subscription
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class AddValueView(generics.CreateAPIView):
@@ -69,8 +70,11 @@ class AddValueView(generics.CreateAPIView):
             account.save()
             return JsonResponse({"success": True})
         except stripe.error.CardError as e:
-            logger.error(
-                f"Payment failed: User={request.user.id}, Amount={amount}, Error={str(e)}"
+            logger.exception(
+                "Payment failed",
+                user_id=request.user.id,
+                amount=amount,
+                error=e.user_message,
             )
             return JsonResponse({"error": e.user_message}, status=400)
 
@@ -85,7 +89,7 @@ class AddValueHistoryView(generics.ListAPIView):
         )
         return [
             {
-                "date": datetime.fromtimestamp(pi.created),
+                "date": datetime.fromtimestamp(pi.created, tz=UTC),
                 "amount": pi.amount / 100,
                 "status": pi.status,
             }
@@ -94,24 +98,23 @@ class AddValueHistoryView(generics.ListAPIView):
 
 
 def load_root_certificates():
+    cert_dir = Path(__file__).resolve().parent / "certs"
     cert_paths = [
-        "payment/certs/AppleRootCA-G3.cer",
-        "payment/certs/AppleRootCA-G2.cer",
-        "payment/certs/AppleIncRootCertificate.cer",
-        "payment/certs/AppleComputerRootCertificate.cer",
+        cert_dir / "AppleRootCA-G3.cer",
+        cert_dir / "AppleRootCA-G2.cer",
+        cert_dir / "AppleIncRootCertificate.cer",
+        cert_dir / "AppleComputerRootCertificate.cer",
     ]
     certs = []
 
     for path in cert_paths:
-        file = open(path, "rb")
-        cert = file.read()
-        file.close()
-        certs.append(cert)
+        with path.open("rb") as file:
+            certs.append(file.read())
     return certs
 
 
 def get_create_apple_subscription(subscription_info: JWSTransactionDecodedPayload):
-    assert isinstance(subscription_info, JWSTransactionDecodedPayload)
+    # assert isinstance(subscription_info, JWSTransactionDecodedPayload)
     product_id = subscription_info.productId
     expires_timestamp = subscription_info.expiresDate
     environment = subscription_info.environment
@@ -120,15 +123,19 @@ def get_create_apple_subscription(subscription_info: JWSTransactionDecodedPayloa
         if environment != Environment.SANDBOX
         else timedelta(seconds=1)
     )
-    expires_date = datetime.fromtimestamp(expires_timestamp / 1000, tz=pytz.utc) + delta
+    expires_date = datetime.fromtimestamp(expires_timestamp / 1000, tz=UTC) + delta
     app_account_token = subscription_info.appAccountToken
-    logger.info(f"Received {environment} subscription:")
-    logger.info(subscription_info)
+    logger.info("Received subscription", environment=str(environment))
+    logger.info(
+        "Received subscription payload", subscription_info=str(subscription_info)
+    )
 
     try:
         account = Account.objects.get(apple_uuid=app_account_token)
     except Account.DoesNotExist:
-        logger.error(f"Account with apple_uuid={app_account_token} not found")
+        logger.exception(
+            "Account not found for apple subscription", apple_uuid=app_account_token
+        )
         return None
 
     subscription, created = Subscription.objects.get_or_create(
@@ -150,11 +157,8 @@ def get_create_apple_subscription(subscription_info: JWSTransactionDecodedPayloa
     return subscription
 
 
+@cache
 def get_signed_data_verifiers():
-    global _signed_data_verifiers
-    if _signed_data_verifiers:
-        return _signed_data_verifiers
-
     root_certificates = load_root_certificates()
 
     signed_data_verifiers = []
@@ -170,11 +174,7 @@ def get_signed_data_verifiers():
             app_apple_id=app_apple_id,
         )
         signed_data_verifiers.append(signed_data_verifier)
-    _signed_data_verifiers = tuple(signed_data_verifiers)
-    return _signed_data_verifiers
-
-
-_signed_data_verifiers = None
+    return tuple(signed_data_verifiers)
 
 
 def verify_and_decode_notification(notification):
@@ -185,7 +185,7 @@ def verify_and_decode_notification(notification):
         try:
             return sandbox_verifier.verify_and_decode_notification(notification)
         except VerificationException:
-            raise prod_exception
+            raise prod_exception from None
 
 
 def verify_and_decode_signed_transaction(signed_transaction):
@@ -198,12 +198,16 @@ def verify_and_decode_signed_transaction(signed_transaction):
                 signed_transaction
             )
         except VerificationException:
-            raise prod_exception
+            raise prod_exception from None
 
 
 class AppleWebhookView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=serializers.WebhookPayloadSerializer,
+        responses=serializers.PaymentMessageResponseSerializer,
+    )
     def post(self, request, *args, **kwargs):
         signed_notification = request.data.get("signedPayload")
         if not signed_notification:
@@ -216,13 +220,10 @@ class AppleWebhookView(APIView):
                 signed_notification
             )
             type_ = payload.notificationType
-            logger.info(f"Received {type_} notification")
+            logger.info("Received Apple notification", notification_type=str(type_))
             if type_ == NotificationTypeV2.TEST:
                 logger.info("Test notification")
-            elif (
-                type_ == NotificationTypeV2.SUBSCRIBED
-                or type_ == NotificationTypeV2.DID_RENEW
-            ):
+            elif type_ in (NotificationTypeV2.SUBSCRIBED, NotificationTypeV2.DID_RENEW):
                 logger.info("Subscribed notification")
                 data: Data = payload.data
                 signed_transaction_info = data.signedTransactionInfo
@@ -231,7 +232,7 @@ class AppleWebhookView(APIView):
                 )
                 get_create_apple_subscription(subscription_info)
         except VerificationException as e:
-            logger.error(f"Verification failed: {e}")
+            logger.exception("Verification failed", error=str(e))
 
         # Handle Apple's server-to-server notifications here
         return Response({"message": "Received"})
@@ -257,7 +258,7 @@ def get_apple_storekit_api_clients():
 
 def get_transaction_history(
     transaction_id: str,
-    revision: Optional[str],
+    revision: str | None,
     transaction_history_request: TransactionHistoryRequest,
     version: GetTransactionHistoryVersion = GetTransactionHistoryVersion.V1,
 ):
@@ -274,6 +275,10 @@ def get_transaction_history(
 
 # For user-uploaded transaction IDs
 class AppleSubscription(APIView):
+    @extend_schema(
+        request=serializers.AppleSubscriptionRequestSerializer,
+        responses=serializers.PaymentMessageResponseSerializer,
+    )
     def post(self, request, *args, **kwargs):
         transaction_id = str(request.data.get("transaction_id"))
         if transaction_id is None:
@@ -283,7 +288,7 @@ class AppleSubscription(APIView):
             )
 
         transactions = []
-        response: Optional[HistoryResponse] = None
+        response: HistoryResponse | None = None
         request: TransactionHistoryRequest = TransactionHistoryRequest(
             sort=Order.ASCENDING,
             revoked=False,
@@ -294,12 +299,12 @@ class AppleSubscription(APIView):
             response = get_transaction_history(
                 transaction_id, revision, request, GetTransactionHistoryVersion.V2
             )
-            for transaction in response.signedTransactions:
-                transactions.append(transaction)
+            transactions.extend(response.signedTransactions)
 
         if not transactions:
-            logger.error(f"No transactions found for transaction_id={transaction_id}")
-            raise ValidationError("No transactions found")
+            logger.error("No transactions found", transaction_id=transaction_id)
+            msg = "No transactions found"
+            raise ValidationError(msg)
         last_transaction = transactions[-1]
         last_transaction_info = verify_and_decode_signed_transaction(last_transaction)
         _ = get_create_apple_subscription(last_transaction_info)
@@ -310,6 +315,13 @@ class AppleSubscription(APIView):
 class StripeCustomerPortalView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=serializers.StripeCustomerPortalRequestSerializer,
+        responses={
+            200: serializers.URLResponseSerializer,
+            400: serializers.PaymentErrorResponseSerializer,
+        },
+    )
     def post(self, request, *args, **kwargs):
         account = request.user.get_account()
         if not account.customer_id:
@@ -333,7 +345,7 @@ class StripeCustomerPortalView(APIView):
             )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe portal session creation failed: {str(e)}")
+            logger.exception("Stripe portal session creation failed", error=str(e))
             return Response(
                 {"error": "Failed to create portal session"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -343,6 +355,13 @@ class StripeCustomerPortalView(APIView):
 class StripeCheckoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=serializers.StripeCheckoutRequestSerializer,
+        responses={
+            200: serializers.URLResponseSerializer,
+            400: serializers.PaymentErrorResponseSerializer,
+        },
+    )
     def post(self, request, *args, **kwargs):
         account = request.user.get_account()
 
@@ -380,7 +399,7 @@ class StripeCheckoutView(APIView):
             )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe checkout session creation failed: {str(e)}")
+            logger.exception("Stripe checkout session creation failed", error=str(e))
             return Response(
                 {"error": "Failed to create checkout session"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -390,6 +409,10 @@ class StripeCheckoutView(APIView):
 class StripeWebhookView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: None, 400: None},
+    )
     def post(self, request, *args, **kwargs):
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
@@ -399,10 +422,10 @@ class StripeWebhookView(APIView):
                 payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
             )
         except ValueError as e:
-            logger.error(f"Invalid payload: {str(e)}")
+            logger.exception("Invalid Stripe webhook payload", error=str(e))
             return Response(status=status.HTTP_400_BAD_REQUEST)
         except stripe.error.SignatureVerificationError as e:
-            logger.error(f"Invalid signature: {str(e)}")
+            logger.exception("Invalid Stripe webhook signature", error=str(e))
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
         # Handle subscription events
@@ -413,18 +436,19 @@ class StripeWebhookView(APIView):
                     customer_id=subscription_object["customer"]
                 )
             except Account.DoesNotExist:
-                logger.error(
-                    f"No account found for Stripe customer {subscription_object['customer']}"
+                logger.exception(
+                    "No account found for Stripe customer",
+                    customer_id=subscription_object["customer"],
                 )
                 return Response(status=status.HTTP_400_BAD_REQUEST)
 
-            if (
-                event.type == "customer.subscription.created"
-                or event.type == "customer.subscription.updated"
-            ):
+            if event.type in {
+                "customer.subscription.created",
+                "customer.subscription.updated",
+            }:
                 # Get the subscription end date
                 current_period_end = datetime.fromtimestamp(
-                    subscription_object["current_period_end"], tz=pytz.UTC
+                    subscription_object["current_period_end"], tz=UTC
                 )
 
                 # Get the product name/ID for subscription_type
@@ -439,7 +463,9 @@ class StripeWebhookView(APIView):
                     },
                 )
                 logger.info(
-                    f"{'Created' if created else 'Updated'} subscription for account {account.pk}"
+                    "Subscription synced from Stripe webhook",
+                    action="created" if created else "updated",
+                    account_id=account.pk,
                 )
 
             elif event.type == "customer.subscription.deleted":
@@ -448,7 +474,8 @@ class StripeWebhookView(APIView):
                     subscription.expiration_date = timezone.now()
                     subscription.save()
                     logger.info(
-                        f"Marked subscription as expired for account {account.pk}"
+                        "Marked subscription as expired",
+                        account_id=account.pk,
                     )
                 except Subscription.DoesNotExist:
                     pass

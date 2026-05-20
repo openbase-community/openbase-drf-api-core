@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -7,7 +5,8 @@ from urllib.parse import urlparse
 import dj_database_url
 import sentry_sdk
 
-from config.app_packages import get_package_apps, load_all_package_settings
+from config.installed_apps import get_installed_apps, load_all_package_settings
+from config.logging import get_logging_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -17,6 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+SITE_ID = 1 if DEBUG else None
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
@@ -27,17 +27,8 @@ ALLOWED_HOSTS = (
     else []
 )
 
-if DEBUG:
-    ALLOWED_HOSTS += [
-        "localhost",
-        "0.0.0.0",  # noqa: S104
-        "10.0.1.154",
-        "host.docker.internal",
-    ]
-
 
 # Application definition
-
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -66,9 +57,12 @@ INSTALLED_APPS = [
     "contact.apps.ContactConfig",
     "payment.apps.PaymentConfig",
     "teams.apps.TeamsConfig",
-    "agent.apps.AgentConfig",
-    *get_package_apps(),
+    *get_installed_apps(),
 ]
+
+if DEBUG:
+    staticfiles_index = INSTALLED_APPS.index("django.contrib.staticfiles")
+    INSTALLED_APPS.insert(staticfiles_index, "whitenoise.runserver_nostatic")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -85,6 +79,7 @@ MIDDLEWARE = [
 
 # Add debug-only middleware
 if DEBUG:
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
     MIDDLEWARE.append("config.middlewares.AllowIframeMiddleware")
 
 # CORS settings
@@ -123,7 +118,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 DATABASES = {"default": dj_database_url.config()}
-DATABASES["default"]["CONN_MAX_AGE"] = 0
+DATABASES["default"]["CONN_MAX_AGE"] = 60
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -159,13 +154,30 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-# AWS Configuration - optional
+# AWS Configuration
 AWS_S3_CUSTOM_DOMAIN = os.environ.get("AWS_S3_CUSTOM_DOMAIN", "")
-USE_S3 = bool(AWS_S3_CUSTOM_DOMAIN)
+AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
 
-if USE_S3:
-    # S3 settings when AWS_S3_CUSTOM_DOMAIN is provided
-    AWS_STORAGE_BUCKET_NAME = AWS_S3_CUSTOM_DOMAIN
+if DEBUG:
+    STATIC_URL = "/static/"
+    STATIC_ROOT = BASE_DIR / "staticfiles"
+
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"
+    WHITENOISE_USE_FINDERS = True
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        },
+    }
+else:
+    AWS_S3_CUSTOM_DOMAIN = os.environ["AWS_S3_CUSTOM_DOMAIN"]
+    AWS_STORAGE_BUCKET_NAME = os.environ["AWS_STORAGE_BUCKET_NAME"]
+
     AWS_DEFAULT_ACL = "public-read"
     AWS_S3_OBJECT_PARAMETERS = {
         "CacheControl": "max-age=86400",
@@ -175,7 +187,6 @@ if USE_S3:
     STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/"
     MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
 
-    # Django 4.2+ STORAGES configuration for S3
     STORAGES = {
         "default": {
             "BACKEND": "config.storages.S3MediaStorage",
@@ -184,25 +195,9 @@ if USE_S3:
             "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
         },
     }
-else:
-    # Local storage when AWS_S3_CUSTOM_DOMAIN is not provided
-    STATIC_URL = "/static/"
-    STATIC_ROOT = BASE_DIR / "staticfiles"
-
-    MEDIA_URL = "/media/"
-    MEDIA_ROOT = BASE_DIR / "media"
-
-    # Django 4.2+ STORAGES configuration for local storage
-    STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
-    }
 
 STATICFILES_DIRS = [BASE_DIR / "static"]
+EMAIL_BACKEND = "config.email.ResendEmailBackend"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -213,59 +208,22 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = False
+    SECURE_SSL_REDIRECT = False  # Caddy handles SSL termination
     SECURE_HSTS_SECONDS = 31536000
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO" if not DEBUG else "DEBUG")
-
-
-# Get all app names for logging configuration
-def get_logging_module_names():
-    base_apps = [
-        "config",
-        "contact",
-        "payment",
-        "teams",
-        "users",
-    ]
-    return base_apps + get_package_apps()
-
-
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "{levelname} {asctime} {module} {message}",
-            "style": "{",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": "INFO",
-            "propagate": True,
-        },
-        **{
-            app_name: {
-                "handlers": ["console"],
-                "level": LOG_LEVEL,
-                "propagate": False,
-            }
-            for app_name in get_logging_module_names()
-        },
-    },
-}
+LOGGING_BASE_APPS = [
+    "config",
+    "contact",
+    "payment",
+    "teams",
+    "users",
+]
+LOGGING = get_logging_config(
+    debug=DEBUG,
+    log_level=LOG_LEVEL,
+    base_apps=LOGGING_BASE_APPS,
+)
 
 
 REST_FRAMEWORK = {
@@ -301,9 +259,12 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
 AUTH_USER_MODEL = "users.User"
 
-REDIS_URL = os.environ["REDIS_URL"] + ("?ssl_cert_reqs=none" if not DEBUG else "")
+REDIS_URL = os.environ["REDIS_URL"]
+if not DEBUG and REDIS_URL.startswith("rediss://"):
+    REDIS_URL = f"{REDIS_URL}{'&' if '?' in REDIS_URL else '?'}ssl_cert_reqs=none"
 REDIS_HOST = urlparse(REDIS_URL).hostname
 REDIS_PORT = urlparse(REDIS_URL).port
+BROKER_URL = REDIS_URL
 
 CHANNEL_LAYERS = {
     "default": {
@@ -323,8 +284,6 @@ CHANNEL_LAYERS = {
     },
 }
 
-BROKER_URL = REDIS_URL
-
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
@@ -342,17 +301,14 @@ OWNED_TWILIO_NUMBER = os.environ.get("OWNED_TWILIO_NUMBER")
 NOTIFICATIONS_APPLE_TEAM_ID = os.environ.get("NOTIFICATIONS_APPLE_TEAM_ID")
 NOTIFICATIONS_APPLE_AUTH_KEY_ID = os.environ.get("NOTIFICATIONS_APPLE_AUTH_KEY_ID")
 NOTIFICATIONS_APPLE_P8_CONTENTS = os.environ.get(
-    "NOTIFICATIONS_APPLE_P8_CONTENTS"
+    "NOTIFICATIONS_APPLE_P8_CONTENTS", ""
 ).replace("\\n", "\n")
-
-SLEEP_TERM = "sleeps-no-notify"
 NOTIFICATIONS_SANDBOX = os.environ.get("NOTIFICATIONS_SANDBOX", "0") == "1"
 
 if not DEBUG:
     CSRF_TRUSTED_ORIGINS = [f"https://{domain}" for domain in ALLOWED_HOSTS]
     CORS_ALLOWED_ORIGINS = CSRF_TRUSTED_ORIGINS.copy()
-    if USE_S3:
-        CORS_ALLOWED_ORIGINS.insert(0, f"https://{AWS_S3_CUSTOM_DOMAIN}")
+    CORS_ALLOWED_ORIGINS.insert(0, f"https://{AWS_S3_CUSTOM_DOMAIN}")
 else:
     CSRF_TRUSTED_ORIGINS = [
         "http://localhost:3000",
@@ -382,15 +338,9 @@ _extra_cors_origins = [
 CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + _extra_csrf_origins
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + _extra_cors_origins
 
-CORS_ALLOW_CREDENTIALS = True
-
-LOGIN_REDIRECT_URL = "/"
-
-LOGOUT_REDIRECT_URL = "/"
-
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
-STRIPE_PRODUCT_ID = os.environ.get("STRIPE_PRODUCT_ID", "prod_implementme")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+CONTACT_NOTIFICATION_EMAIL = os.environ.get("CONTACT_NOTIFICATION_EMAIL")
 
 APPLE_BUNDLE_ID = os.environ.get("APPLE_BUNDLE_ID")
 APPLE_APP_APPLE_ID = os.environ.get("APPLE_APP_APPLE_ID")
@@ -398,7 +348,7 @@ APPLE_STOREKIT_KEY_ID = os.environ.get("APPLE_STOREKIT_KEY_ID")
 APPLE_STOREKIT_ISSUER_ID = os.environ.get("APPLE_STOREKIT_ISSUER_ID")
 APPLE_STOREKIT_P8_CONTENTS = os.environ.get("APPLE_STOREKIT_P8_CONTENTS")
 
-ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"]
+ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"] if not DEBUG else ""
 
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 if SENTRY_DSN:
@@ -432,12 +382,9 @@ HEADLESS_ADAPTER = "config.allauth_adapter.HeadlessAdapter"
 HEADLESS_ENABLED = True
 HEADLESS_ONLY = True
 HEADLESS_TOKEN_STRATEGY = "config.jwt.OpenbaseJWTTokenStrategy"  # noqa: S105
-HEADLESS_JWT_PRIVATE_KEY = os.environ.get("HEADLESS_JWT_PRIVATE_KEY", "").replace(
-    "\\n", "\n"
-)
-HEADLESS_JWT_ISSUER = os.environ.get(
-    "HEADLESS_JWT_ISSUER", "https://app.openbase.cloud"
-)
+HEADLESS_JWT_PRIVATE_KEY = os.environ["HEADLESS_JWT_PRIVATE_KEY"].replace("\\n", "\n")
+if os.environ.get("HEADLESS_JWT_ISSUER"):
+    HEADLESS_JWT_ISSUER = os.environ["HEADLESS_JWT_ISSUER"]
 HEADLESS_JWT_AUDIENCE = os.environ.get("HEADLESS_JWT_AUDIENCE", "openbase-coder-cli")
 HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 300  # 5 minutes
 HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7  # 7 days
@@ -461,14 +408,6 @@ SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 LOGIN_URL = "/account/login"
 LOGIN_REDIRECT_URL = "/"  # Where to redirect after login
 LOGOUT_REDIRECT_URL = "/"  # Where to redirect after logout
-
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-
-EMAIL_HOST = "smtp.sendgrid.net"
-EMAIL_HOST_USER = "apikey"  # this is exactly the value 'apikey'
-EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
 
 BILLING_MAX_PROJECTS_PER_USER = int(os.getenv("BILLING_MAX_PROJECTS_PER_USER", "1"))
 BILLING_MAX_LIVEKIT_TOKENS_PER_DAY = int(

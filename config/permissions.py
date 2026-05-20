@@ -1,12 +1,6 @@
-_required_site_key = "required_site_key"
-
-
-"""
-Provides a set of pluggable permission policies.
-"""
-
-
 from rest_framework.permissions import SAFE_METHODS
+
+_required_site_key = "required_site_key"
 
 
 class AllowAny:
@@ -47,8 +41,7 @@ class IsAuthenticatedOrReadOnly:
     async def has_permission(self, request, view):
         return bool(
             request.method in SAFE_METHODS
-            or request.user
-            and request.user.is_authenticated
+            or (request.user and request.user.is_authenticated)
         )
 
 
@@ -59,6 +52,4 @@ class IsAuthenticatedForSite(IsAuthenticated):
         required_site_id = getattr(view, _required_site_key, None)
         if not required_site_id:
             return False
-        if not request.user.site == required_site_id:
-            return False
-        return True
+        return request.user.site == required_site_id

@@ -1,0 +1,21 @@
+{
+	# Dev-only Caddy config for local docker-compose proxying.
+	auto_https off
+	admin off
+}
+
+:80 {
+	request_body {
+		max_size 100MB
+	}
+
+	@backend path /api/* /admin/* /accounts/* /ws/* /_allauth/* /.well-known/* /static /static/* /media /media/*
+
+	handle @backend {
+		reverse_proxy {$PROXY_TARGET:host.docker.internal:8000}
+	}
+
+	handle {
+		reverse_proxy {$FRONTEND_PROXY_TARGET:host.docker.internal:8080}
+	}
+}

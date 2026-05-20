@@ -1,15 +1,8 @@
-from __future__ import annotations
-
 import json
 import os
 
 import allauth.headless.urls
-
-# from django.contrib import admin
 from django.conf import settings
-
-# from django.contrib import admin # Comment out or remove, as we use the custom site instance directly
-from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -22,7 +15,8 @@ from oauth2_provider.urls import (
     urlpatterns as oauth_url_patterns,
 )
 
-from config.app_packages import get_package_apps
+from config.admin import site as dynamic_admin_site
+from config.installed_apps import get_installed_apps
 from config.jwt import jwks_view
 from sites import views
 
@@ -36,8 +30,9 @@ admin_suffix = f"-{settings.ADMIN_SUFFIX}" if not settings.DEBUG else ""
 #     dynamic_admin_site.login = secure_admin_login(dynamic_admin_site.login)
 
 urlpatterns = [
-    path(f"admin{admin_suffix}/", admin.site.urls),  # Use custom admin site
+    path(f"admin{admin_suffix}/", dynamic_admin_site.urls),
     path(".well-known/jwks.json", jwks_view, name="jwks"),
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "o/",
         include(
@@ -53,7 +48,6 @@ urlpatterns = [
     path("api/", include("users.urls")),
     path("api/", include("contact.urls")),
     path("api/", include("payment.urls")),
-    path("api/", include("agent.urls")),
 ]
 
 extra_urls = allauth.headless.urls
@@ -62,7 +56,7 @@ extra_urls = allauth.headless.urls
 url_prefixes = json.loads(os.environ.get("URL_PREFIXES", "{}"))
 
 # Add enabled site URLs
-for app in get_package_apps():
+for app in get_installed_apps():
     # Check for exact match first
     if app in url_prefixes:
         prefix = url_prefixes[app].rstrip("/") + "/"
@@ -91,7 +85,6 @@ if not settings.DEBUG:
 else:
     urlpatterns += [
         # API Schema documentation
-        path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
         path(
             "api/docs/",
             SpectacularSwaggerView.as_view(url_name="schema"),

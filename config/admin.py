@@ -1,48 +1,37 @@
 import inspect
 
 from django.contrib import admin
-from django.core.handlers.wsgi import WSGIRequest
+from django.contrib.sites.shortcuts import get_current_site
 from django.db import models
+from django.http import HttpRequest
+
+from sites.models import SiteAttributes
 
 
 class DynamicAdminSite(admin.AdminSite):
-    def get_app_list(self, request: WSGIRequest, *args, **kwargs):
+    def get_app_list(self, request: HttpRequest, *args, **kwargs):
         """
         Return a list of applications and models that are available for the
         current site.
         """
         app_list = super().get_app_list(request, *args, **kwargs)
-        current_site = getattr(request, "site", None)
+        current_site = get_current_site(request)
 
         if not current_site:
-            # If there's no site on the request, or it's not what we expect,
-            # return all apps or a default set.
             return app_list
 
-        # Placeholder for logic to determine which apps are allowed for the current_site
-        # For example, you might have a dictionary mapping site domains or names to app labels.
-        # allowed_app_labels_for_site = {
-        # "example.com": ["auth", "sites", "myapp1"],
-        # "another.example.com": ["auth", "sites", "myapp2"],
-        # }.get(current_site.domain, [])
+        site_attributes = SiteAttributes.objects.filter(site=current_site).first()
+        if not site_attributes or not site_attributes.admin_app_labels:
+            return app_list
 
-        # For now, let's assume we have a way to get allowed app labels
-        # This is a simplified example; you'll need to define this logic.
-        if current_site.domain == "specific.domain.com":
-            allowed_app_labels = ["users", "teams"]  # Example
-        else:
-            allowed_app_labels = [
-                app["app_label"] for app in app_list
-            ]  # Show all by default
-
-        filtered_app_list = []
-        for app in app_list:
-            if app["app_label"] in allowed_app_labels:
-                # You might also want to filter models within an app
-                # app["models"] = [model for model in app["models"] if model["object_name"] in allowed_model_names]
-                filtered_app_list.append(app)
-
-        return filtered_app_list
+        allowed_app_labels = {
+            app_label
+            for app_label in site_attributes.admin_app_labels
+            if isinstance(app_label, str) and app_label.strip()
+        }
+        return [
+            app for app in app_list if app["app_label"] in allowed_app_labels
+        ]
 
 
 def auto_register_models(app_models):
@@ -68,5 +57,6 @@ def auto_register_models(app_models):
         admin.site.register(model_class)
 
 
-# Instantiate your custom admin site
-site = DynamicAdminSite(name="dynamic_admin")
+# Rebind Django's default admin site so existing registrations keep working.
+admin.site.__class__ = DynamicAdminSite
+site = admin.site

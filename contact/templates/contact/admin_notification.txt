@@ -1,0 +1,9 @@
+A new contact form submission was received.
+
+Site: {% if site %}{{ site.name }}{% else %}Unknown{% endif %}
+Domain: {% if site %}{{ site.domain }}{% else %}Unknown{% endif %}
+Name: {% if submission.name %}{{ submission.name }}{% else %}Not provided{% endif %}
+Email: {{ submission.email }}
+
+Message:
+{% if submission.message %}{{ submission.message }}{% else %}(empty){% endif %}

@@ -17,9 +17,8 @@ class Team(models.Model):
         blank=True,
     )
 
-    @classmethod
-    def get_access_user_username(cls, slug):
-        return f"team_{slug.replace('-', '_')}"
+    def __str__(self):
+        return self.name
 
     def save(
         self, force_insert=False, force_update=False, using=None, update_fields=None
@@ -27,8 +26,13 @@ class Team(models.Model):
         if not self.slug:
             self.slug = name_to_slug(self.name)
             if Team.objects.filter(slug=self.slug).exists():
-                raise ValidationError(f"Team with slug {self.slug} already exists.")
+                msg = f"Team with slug {self.slug} already exists."
+                raise ValidationError(msg)
         super().save(force_insert, force_update, using, update_fields)
+
+    @classmethod
+    def get_access_user_username(cls, slug):
+        return f"team_{slug.replace('-', '_')}"
 
     @property
     def billable_users(self):
@@ -42,9 +46,6 @@ class Team(models.Model):
 
     def get_email(self):
         return self.owner.email if self.owner else None
-
-    def __str__(self):
-        return self.name
 
 
 def name_to_slug(name):
@@ -79,8 +80,7 @@ def get_user_or_team_ownership_mixin(
 
         def validate_owner(self):
             if self.user_owner and self.team_owner:
-                raise serializers.ValidationError(
-                    "Cannot have both user_owner and team_owner"
-                )
+                msg = "Cannot have both user_owner and team_owner"
+                raise serializers.ValidationError(msg)
 
     return UserOrTeamOwnershipMixin

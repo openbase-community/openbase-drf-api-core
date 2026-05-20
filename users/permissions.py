@@ -25,19 +25,3 @@ class ValidateTwilioRequest(permissions.BasePermission):
 
     def has_object_permission(self, request, view, obj):
         return True
-
-
-class IsToOwnedNumber(permissions.BasePermission):
-    """
-    Permission class to validate the 'To' field in the POST request.
-    """
-
-    def has_permission(self, request, view):
-        # Validate 'To' number
-        to_number = request.data.get("To", None)
-        if to_number != settings.OWNED_TWILIO_NUMBER:
-            return False
-        return True
-
-    def has_object_permission(self, request, view, obj):
-        return True

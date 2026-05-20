@@ -1,6 +1,7 @@
 from asgiref.sync import sync_to_async
-from django.contrib.sites.shortcuts import get_current_site
 from django.contrib.sites.models import Site
+from django.contrib.sites.shortcuts import get_current_site
+
 from .models import SiteAttributes
 
 # Local memory cache mapping hosts to site attributes

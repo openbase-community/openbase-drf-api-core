@@ -1,18 +1,16 @@
-from __future__ import annotations
-
 import json
-import logging
 
+import structlog
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class UserEventsConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.user = self.scope["user"]
 
-        from django.contrib.auth.models import AnonymousUser
+        from django.contrib.auth.models import AnonymousUser  # noqa: PLC0415
 
         if isinstance(self.user, AnonymousUser):
             await self.close()
@@ -23,14 +21,14 @@ class UserEventsConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group_name, self.channel_name)
 
         await self.accept()
-        logger.info(f"WebSocket connected for user {self.user.id}")
+        logger.info("WebSocket connected", user_id=self.user.id)
 
     async def disconnect(self, code):
         if hasattr(self, "user_group_name"):
             await self.channel_layer.group_discard(
                 self.user_group_name, self.channel_name
             )
-            logger.info(f"WebSocket disconnected for user {self.user.id}")
+            logger.info("WebSocket disconnected", user_id=self.user.id)
 
     async def receive(self, text_data=None, bytes_data=None):
         pass

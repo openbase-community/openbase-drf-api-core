@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from django.contrib.sites.models import Site
 from django.db import models
 
@@ -9,6 +7,11 @@ class SiteAttributes(models.Model):
         Site,
         on_delete=models.CASCADE,
         related_name="attributes",
+    )
+    admin_app_labels = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Django admin app labels visible for this site. Leave empty to show all apps.",
     )
     s3_frontend_folder = models.CharField(
         max_length=255,

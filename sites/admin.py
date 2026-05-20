@@ -9,6 +9,7 @@ class SiteAttributesInline(admin.StackedInline):
     model = SiteAttributes
     can_delete = False
     fields = (
+        "admin_app_labels",
         "s3_frontend_folder",
         "stripe_product_id",
         "stripe_price_cents",

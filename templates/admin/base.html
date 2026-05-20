@@ -1,4 +1,7 @@
-{% extends 'admin/base.html' %} {% block extrahead %}{{ block.super }}
+{% extends 'admin/base.html' %}
+
+{% block extrahead %}
+{{ block.super }}
 <style>
   :root {
     --primary: #79aec8;
@@ -55,6 +58,11 @@
   body.in-iframe #content {
     margin-top: 0 !important;
     padding-top: 10px;
+  }
+
+  #site-name a:link,
+  #site-name a:visited {
+    color: #fff;
   }
 </style>
 

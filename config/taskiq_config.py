@@ -1,8 +1,6 @@
-from __future__ import annotations
-
-import logging
 import os
 
+import structlog
 from taskiq import TaskiqScheduler
 from taskiq.schedule_sources import LabelScheduleSource
 
@@ -15,7 +13,7 @@ if not settings.configured:
 
 from taskiq_redis import ListQueueBroker
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 broker = ListQueueBroker(
     url=settings.BROKER_URL,

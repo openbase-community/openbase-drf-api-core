@@ -1,11 +1,8 @@
-from __future__ import annotations
-
-from django.conf import settings
-from django.http import JsonResponse
-
 from allauth.account.models import EmailAddress
 from allauth.core.internal import jwkkit
 from allauth.headless.tokens.strategies.jwt import JWTTokenStrategy
+from django.conf import settings
+from django.http import JsonResponse
 
 
 class OpenbaseJWTTokenStrategy(JWTTokenStrategy):

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import secrets
 
 from django.db import models
@@ -36,7 +34,6 @@ class PublicIdRelatedField(serializers.PrimaryKeyRelatedField):
         super().__init__(**kwargs)
 
     def use_pk_only_optimization(self):
-        # TODO: Reset to False
         return False
 
     def to_internal_value(self, data):

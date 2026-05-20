@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from decimal import Decimal
 
@@ -62,7 +60,7 @@ class Subscription(models.Model):
     )
     subscription_type = models.CharField(max_length=100)
     expiration_date = models.DateTimeField()
-    platform_data = models.JSONField(default=dict)
+    platform_data = models.JSONField(default=dict, blank=True)
     is_sandbox = models.BooleanField(default=False)
 
     def __str__(self):

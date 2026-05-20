@@ -1,16 +1,16 @@
-from __future__ import annotations
+from typing import Any
 
-import logging
-from typing import Any, Type
-
+import structlog
 from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from rest_framework.serializers import Serializer
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
-def send_event_to_user(user_id: int, event_type: str, data: dict[str, Any] | None = None) -> None:
+def send_event_to_user(
+    user_id: int, event_type: str, data: dict[str, Any] | None = None
+) -> None:
     channel_layer = get_channel_layer()
     if not channel_layer:
         logger.warning("Channel layer not available")
@@ -25,10 +25,12 @@ def send_event_to_user(user_id: int, event_type: str, data: dict[str, Any] | Non
     }
 
     async_to_sync(channel_layer.group_send)(group_name, event)
-    logger.debug(f"Sent {event_type} event to user {user_id}")
+    logger.debug("Sent event to user", event_type=event_type, user_id=user_id)
 
 
-async def send_event_to_user_async(user_id: int, event_type: str, data: dict[str, Any] | None = None) -> None:
+async def send_event_to_user_async(
+    user_id: int, event_type: str, data: dict[str, Any] | None = None
+) -> None:
     channel_layer = get_channel_layer()
     if not channel_layer:
         logger.warning("Channel layer not available")
@@ -43,14 +45,14 @@ async def send_event_to_user_async(user_id: int, event_type: str, data: dict[str
     }
 
     await channel_layer.group_send(group_name, event)
-    logger.debug(f"Sent {event_type} event to user {user_id}")
+    logger.debug("Sent event to user", event_type=event_type, user_id=user_id)
 
 
 async def send_serialized_event_to_user_async(
     user_id: int,
     event_type: str,
     instance: Any,
-    serializer_class: Type[Serializer],
+    serializer_class: type[Serializer],
     context: dict[str, Any] | None = None,
 ) -> None:
     """
@@ -64,6 +66,7 @@ async def send_serialized_event_to_user_async(
         serializer_class: The serializer class to use for serialization
         context: Optional context dictionary for the serializer
     """
+
     @sync_to_async
     def serialize_instance():
         serializer = serializer_class(instance, context=context or {})
