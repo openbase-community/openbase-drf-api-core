@@ -1,6 +1,24 @@
 import functools
 import importlib.metadata
 
+PROTECTED_PACKAGE_SETTINGS = {
+    "ACCOUNT_ADAPTER",
+    "ACCOUNT_EMAIL_VERIFICATION",
+    "ACCOUNT_LOGIN_METHODS",
+    "ACCOUNT_SIGNUP_FIELDS",
+    "ACCOUNT_UNIQUE_EMAIL",
+    "ACCOUNT_USER_MODEL_EMAIL_FIELD",
+    "ACCOUNT_USER_MODEL_USERNAME_FIELD",
+    "AUTHENTICATION_BACKENDS",
+    "HEADLESS_ADAPTER",
+    "HEADLESS_ENABLED",
+    "HEADLESS_FRONTEND_URLS",
+    "HEADLESS_JWT_AUDIENCE",
+    "HEADLESS_JWT_ISSUER",
+    "HEADLESS_ONLY",
+    "HEADLESS_TOKEN_STRATEGY",
+}
+
 
 @functools.cache
 def get_installed_apps() -> list[str]:
@@ -20,7 +38,11 @@ def merge_settings_from_module(mod, target_globals):
     names = getattr(mod, "__all__", None) or dir(mod)
     for name in names:
         # copy only public, UPPERCASE names (typical Django convention)
-        if not name.startswith("_") and name.isupper():
+        if (
+            not name.startswith("_")
+            and name.isupper()
+            and name not in PROTECTED_PACKAGE_SETTINGS
+        ):
             target_globals[name] = getattr(mod, name)
 
 
