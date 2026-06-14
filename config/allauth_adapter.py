@@ -7,6 +7,7 @@ from allauth.core import context
 from allauth.headless.adapter import DefaultHeadlessAdapter
 
 from config.email import get_request_from_email
+from config.email_verification import user_has_verified_email
 
 
 class AccountAdapter(DefaultAccountAdapter):
@@ -21,6 +22,7 @@ class UserDataclass:
     first_name: str
     last_name: str
     display: str
+    email_verified: bool
 
 
 class HeadlessAdapter(DefaultHeadlessAdapter):
@@ -34,6 +36,7 @@ class HeadlessAdapter(DefaultHeadlessAdapter):
             first_name=user.first_name,
             last_name=user.last_name,
             display=user_display(user),
+            email_verified=user_has_verified_email(user),
         )
 
     def serialize_user(self, user) -> dict[str, Any]:
@@ -49,4 +52,5 @@ class HeadlessAdapter(DefaultHeadlessAdapter):
             "last_name": user.last_name,
             "display": user_display(user),
             "has_usable_password": user.has_usable_password(),
+            "email_verified": user_has_verified_email(user),
         }

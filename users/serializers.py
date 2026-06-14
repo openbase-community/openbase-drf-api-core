@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from config.email_verification import user_has_verified_email
 from config.serializers import BaseModelSerializer
 
 User = get_user_model()
@@ -19,11 +20,13 @@ class UserSerializer(BaseModelSerializer):
             "balance",
             "active_subscription",
             "is_staff",
+            "email_verified",
         ]
-        read_only_fields = ["email", "balance", "is_staff"]
+        read_only_fields = ["email", "balance", "is_staff", "email_verified"]
 
     balance = serializers.SerializerMethodField()
     active_subscription = serializers.SerializerMethodField()
+    email_verified = serializers.SerializerMethodField()
 
     @extend_schema_field(serializers.DecimalField(max_digits=10, decimal_places=2))
     def get_balance(self, obj):
@@ -32,3 +35,7 @@ class UserSerializer(BaseModelSerializer):
     @extend_schema_field(serializers.BooleanField)
     def get_active_subscription(self, obj):
         return async_to_sync(obj.active_subscription)()
+
+    @extend_schema_field(serializers.BooleanField)
+    def get_email_verified(self, obj):
+        return user_has_verified_email(obj)
