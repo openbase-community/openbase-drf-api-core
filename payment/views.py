@@ -45,6 +45,22 @@ from payment.models import Account, Subscription
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
+PLACEHOLDER_STRIPE_PRODUCT_ID = "prod_implementme"
+
+
+def build_site_checkout_price_data(site):
+    attributes = site.attributes
+    price_data = {
+        "recurring": {"interval": "month"},
+        "currency": "usd",
+        "unit_amount": attributes.stripe_price_cents,
+    }
+    product_id = attributes.stripe_product_id.strip()
+    if product_id and product_id != PLACEHOLDER_STRIPE_PRODUCT_ID:
+        price_data["product"] = product_id
+    else:
+        price_data["product_data"] = {"name": site.name or site.domain}
+    return price_data
 
 
 class AddValueView(generics.CreateAPIView):
@@ -375,21 +391,13 @@ class StripeCheckoutView(APIView):
         cancel_url = request.data.get("cancel_url", f"{base_url}/settings/")
 
         try:
+            site = get_current_site(request)
             session = stripe.checkout.Session.create(
                 customer=account.customer_id,
                 payment_method_types=["card"],
                 line_items=[
                     {
-                        "price_data": {
-                            "product": get_current_site(
-                                request
-                            ).attributes.stripe_product_id,
-                            "recurring": {"interval": "month"},
-                            "currency": "usd",
-                            "unit_amount": get_current_site(
-                                request
-                            ).attributes.stripe_price_cents,
-                        },
+                        "price_data": build_site_checkout_price_data(site),
                         "quantity": 1,
                     }
                 ],
