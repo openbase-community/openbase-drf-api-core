@@ -40,11 +40,27 @@ for app in get_installed_apps():
         pass
 
 
+class AllowMissingOriginValidator:
+    def __init__(self, application):
+        self.application = application
+        self.origin_validator = AllowedHostsOriginValidator(application)
+
+    async def __call__(self, scope, receive, send):
+        if not self.has_origin(scope):
+            return await self.application(scope, receive, send)
+        return await self.origin_validator(scope, receive, send)
+
+    @staticmethod
+    def has_origin(scope) -> bool:
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        return b"origin" in headers
+
+
+websocket_application = AuthMiddlewareStack(URLRouter(all_websocket_patterns))
+
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": AllowedHostsOriginValidator(
-            AuthMiddlewareStack(URLRouter(all_websocket_patterns))
-        ),
+        "websocket": AllowMissingOriginValidator(websocket_application),
     }
 )
