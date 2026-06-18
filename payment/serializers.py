@@ -30,6 +30,11 @@ class StripeCustomerPortalRequestSerializer(serializers.Serializer):
 class StripeCheckoutRequestSerializer(serializers.Serializer):
     success_url = serializers.URLField(required=False)
     cancel_url = serializers.URLField(required=False)
+    monthly_tier_cents = serializers.ChoiceField(
+        choices=(2000, 10000, 20000),
+        required=False,
+        default=2000,
+    )
 
 
 class URLResponseSerializer(serializers.Serializer):

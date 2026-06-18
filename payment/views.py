@@ -46,14 +46,24 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
 PLACEHOLDER_STRIPE_PRODUCT_ID = "prod_implementme"
+DEFAULT_SUBSCRIPTION_TIER_CENTS = 2000
+SUBSCRIPTION_TIER_CENTS = (2000, 10000, 20000)
 
 
-def build_site_checkout_price_data(site):
+def subscription_tier_cents(value) -> int:
+    amount = int(value or DEFAULT_SUBSCRIPTION_TIER_CENTS)
+    if amount not in SUBSCRIPTION_TIER_CENTS:
+        msg = "Unsupported subscription tier."
+        raise ValidationError(msg)
+    return amount
+
+
+def build_site_checkout_price_data(site, *, monthly_tier_cents=None):
     attributes = site.attributes
     price_data = {
         "recurring": {"interval": "month"},
         "currency": "usd",
-        "unit_amount": attributes.stripe_price_cents,
+        "unit_amount": subscription_tier_cents(monthly_tier_cents),
     }
     product_id = attributes.stripe_product_id.strip()
     if product_id and product_id != PLACEHOLDER_STRIPE_PRODUCT_ID:
@@ -379,6 +389,8 @@ class StripeCheckoutView(APIView):
         },
     )
     def post(self, request, *args, **kwargs):
+        serializer = serializers.StripeCheckoutRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         account = request.user.get_account()
 
         # Get the base URL from the current request
@@ -387,8 +399,18 @@ class StripeCheckoutView(APIView):
         base_url = f"{protocol}://{domain}"
 
         # Allow override of success/cancel URLs but default to the current site
-        success_url = request.data.get("success_url", f"{base_url}/settings/")
-        cancel_url = request.data.get("cancel_url", f"{base_url}/settings/")
+        success_url = serializer.validated_data.get(
+            "success_url",
+            f"{base_url}/settings/",
+        )
+        cancel_url = serializer.validated_data.get(
+            "cancel_url",
+            f"{base_url}/settings/",
+        )
+        monthly_tier_cents = serializer.validated_data.get(
+            "monthly_tier_cents",
+            DEFAULT_SUBSCRIPTION_TIER_CENTS,
+        )
 
         try:
             site = get_current_site(request)
@@ -397,7 +419,10 @@ class StripeCheckoutView(APIView):
                 payment_method_types=["card"],
                 line_items=[
                     {
-                        "price_data": build_site_checkout_price_data(site),
+                        "price_data": build_site_checkout_price_data(
+                            site,
+                            monthly_tier_cents=monthly_tier_cents,
+                        ),
                         "quantity": 1,
                     }
                 ],
