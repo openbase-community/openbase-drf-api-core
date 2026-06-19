@@ -78,13 +78,20 @@ class User(AbstractBaseUser, PermissionsMixin):
             account = self.account
         if not account.customer_id:
             with contextlib.suppress(stripe.error.AuthenticationError):
-                customer = stripe.Customer.create(
-                    email=self.email,
-                    metadata={"user_id": self.id},
-                )
-                customer_id = customer.id
-                account.customer_id = customer_id
-                account.save()
+                self.create_stripe_customer(account)
+        return account
+
+    def create_stripe_customer(self, account=None):
+        if account is None:
+            from payment.models import Account
+
+            account, _ = Account.objects.get_or_create(user_owner=self)
+        customer = stripe.Customer.create(
+            email=self.email,
+            metadata={"user_id": self.id},
+        )
+        account.customer_id = customer.id
+        account.save(update_fields=["customer_id"])
         return account
 
     async def aget_account(self):

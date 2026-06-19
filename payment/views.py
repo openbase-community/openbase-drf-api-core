@@ -28,6 +28,7 @@ from appstoreserverlibrary.signed_data_verifier import (
     SignedDataVerifier,
     VerificationException,
 )
+from django.apps import apps
 from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
@@ -45,6 +46,7 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
 DEFAULT_SUBSCRIPTION_TIER_CENTS = 2000
+PRO_TRIAL_PERIOD_DAYS = 1
 SUBSCRIPTION_TIERS = {
     2000: {
         "plan": "pro",
@@ -93,6 +95,16 @@ def subscription_tier_price_id(value) -> str:
         )
         raise ValidationError(msg)
     return price_id
+
+
+def stripe_error_is_missing_customer(error: stripe.error.StripeError) -> bool:
+    if not isinstance(error, stripe.error.InvalidRequestError):
+        return False
+    if getattr(error, "param", None) == "customer":
+        return True
+
+    error_message = str(error).lower()
+    return "no such customer" in error_message and "cus_" in error_message
 
 
 class AddValueView(generics.CreateAPIView):
@@ -387,10 +399,19 @@ class StripeCustomerPortalView(APIView):
         return_url = request.data.get("return_url", default_return_url)
 
         try:
-            session = stripe.billing_portal.Session.create(
-                customer=account.customer_id,
-                return_url=return_url,
-            )
+            try:
+                session = stripe.billing_portal.Session.create(
+                    customer=account.customer_id,
+                    return_url=return_url,
+                )
+            except stripe.error.StripeError as e:
+                if not stripe_error_is_missing_customer(e):
+                    raise
+                account = request.user.create_stripe_customer(account)
+                session = stripe.billing_portal.Session.create(
+                    customer=account.customer_id,
+                    return_url=return_url,
+                )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
             logger.exception("Stripe portal session creation failed", error=str(e))
@@ -436,35 +457,141 @@ class StripeCheckoutView(APIView):
         normalized_tier_cents = subscription_tier_cents(monthly_tier_cents)
 
         try:
-            session = stripe.checkout.Session.create(
-                customer=account.customer_id,
-                payment_method_types=["card"],
-                line_items=[
-                    {
-                        "price": subscription_tier_price_id(normalized_tier_cents),
-                        "quantity": 1,
-                    }
-                ],
-                mode="subscription",
-                subscription_data={
-                    "metadata": {
-                        "openbase_plan_key": subscription_tier_plan(
-                            normalized_tier_cents
-                        ),
-                        "openbase_plan": subscription_tier_name(normalized_tier_cents),
-                        "openbase_monthly_tier_cents": str(normalized_tier_cents),
-                    },
-                },
+            session = create_checkout_session(
+                account=account,
+                normalized_tier_cents=normalized_tier_cents,
                 success_url=success_url,
                 cancel_url=cancel_url,
             )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
-            logger.exception("Stripe checkout session creation failed", error=str(e))
-            return Response(
-                {"error": "Failed to create checkout session"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if not stripe_error_is_missing_customer(e):
+                logger.exception("Stripe checkout session creation failed", error=str(e))
+                return Response(
+                    {"error": "Failed to create checkout session"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                account = request.user.create_stripe_customer(account)
+                session = create_checkout_session(
+                    account=account,
+                    normalized_tier_cents=normalized_tier_cents,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                )
+                return Response({"url": session.url})
+            except stripe.error.StripeError as retry_error:
+                logger.exception(
+                    "Stripe checkout session creation failed",
+                    error=str(retry_error),
+                )
+                return Response(
+                    {"error": "Failed to create checkout session"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+
+def create_checkout_session(*, account, normalized_tier_cents, success_url, cancel_url):
+    subscription_data = {
+        "metadata": {
+            "openbase_plan_key": subscription_tier_plan(normalized_tier_cents),
+            "openbase_plan": subscription_tier_name(normalized_tier_cents),
+            "openbase_monthly_tier_cents": str(normalized_tier_cents),
+        },
+    }
+    if normalized_tier_cents == DEFAULT_SUBSCRIPTION_TIER_CENTS:
+        subscription_data["trial_period_days"] = PRO_TRIAL_PERIOD_DAYS
+
+    return stripe.checkout.Session.create(
+        customer=account.customer_id,
+        payment_method_types=["card"],
+        line_items=[
+            {
+                "price": subscription_tier_price_id(normalized_tier_cents),
+                "quantity": 1,
+            }
+        ],
+        mode="subscription",
+        subscription_data=subscription_data,
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
+
+
+def terminate_user_running_resources(user) -> dict[str, int]:
+    result = {
+        "devspaces_terminated": 0,
+        "deployment_teardowns_queued": 0,
+    }
+    if apps.is_installed("openbase_api.devspaces"):
+        result["devspaces_terminated"] = terminate_user_devspaces(user)
+    if apps.is_installed("openbase_api.deployment"):
+        result["deployment_teardowns_queued"] = queue_user_deployment_teardowns(user)
+    return result
+
+
+def terminate_user_devspaces(user) -> int:
+    try:
+        from openbase_api.devspaces.usage_limits import (
+            terminate_running_devspaces_for_user,
+        )
+    except ImportError:
+        from openbase_api.devspaces.ec2 import DevSpaceEC2Manager
+        from openbase_api.devspaces.models import DevSpace
+        from openbase_api.devspaces.usage_limits import accrue_running_devspace_usage
+
+        manager = DevSpaceEC2Manager()
+        terminated_count = 0
+        for devspace in DevSpace.objects.filter(
+            user=user,
+            status__in=(DevSpace.Status.RUNNING, DevSpace.Status.STARTING),
+        ):
+            accrue_running_devspace_usage(devspace)
+            if devspace.ec2_instance_id:
+                manager.terminate_instance(devspace.ec2_instance_id)
+            devspace.mark_terminated()
+            terminated_count += 1
+        return terminated_count
+
+    return terminate_running_devspaces_for_user(user)
+
+
+def queue_user_deployment_teardowns(user) -> int:
+    try:
+        from openbase_api.deployment.services import (
+            queue_subscription_cancellation_teardowns,
+        )
+    except ImportError:
+        from openbase_api.deployment.services import queue_monthly_spend_limit_teardowns
+
+        return queue_monthly_spend_limit_teardowns(user)
+
+    return queue_subscription_cancellation_teardowns(user)
+
+
+def expire_subscription_and_terminate_resources(
+    account: Account,
+    *,
+    platform_data,
+) -> dict[str, int]:
+    Subscription.objects.update_or_create(
+        account=account,
+        defaults={
+            "subscription_type": str(
+                (platform_data.get("items", {}).get("data", [{}])[0])
+                .get("price", {})
+                .get("product", "")
+            ),
+            "expiration_date": timezone.now(),
+            "platform_data": platform_data,
+        },
+    )
+    if not account.user_owner:
+        return {
+            "devspaces_terminated": 0,
+            "deployment_teardowns_queued": 0,
+        }
+    return terminate_user_running_resources(account.user_owner)
 
 
 class StripeWebhookView(APIView):
@@ -503,7 +630,22 @@ class StripeWebhookView(APIView):
                 )
                 return Response(status=status.HTTP_400_BAD_REQUEST)
 
-            if event.type in {
+            subscription_is_canceling = bool(
+                subscription_object.get("cancel_at_period_end")
+            )
+
+            if event.type == "customer.subscription.deleted" or subscription_is_canceling:
+                cleanup_result = expire_subscription_and_terminate_resources(
+                    account,
+                    platform_data=subscription_object,
+                )
+                logger.info(
+                    "Marked subscription as expired and queued resource termination",
+                    account_id=account.pk,
+                    event_type=event.type,
+                    **cleanup_result,
+                )
+            elif event.type in {
                 "customer.subscription.created",
                 "customer.subscription.updated",
             }:
@@ -515,7 +657,7 @@ class StripeWebhookView(APIView):
                 # Get the product name/ID for subscription_type
                 product_id = subscription_object["items"]["data"][0]["price"]["product"]
 
-                subscription, created = Subscription.objects.update_or_create(
+                _subscription, created = Subscription.objects.update_or_create(
                     account=account,
                     defaults={
                         "subscription_type": product_id,
@@ -528,17 +670,5 @@ class StripeWebhookView(APIView):
                     action="created" if created else "updated",
                     account_id=account.pk,
                 )
-
-            elif event.type == "customer.subscription.deleted":
-                try:
-                    subscription = Subscription.objects.get(account=account)
-                    subscription.expiration_date = timezone.now()
-                    subscription.save()
-                    logger.info(
-                        "Marked subscription as expired",
-                        account_id=account.pk,
-                    )
-                except Subscription.DoesNotExist:
-                    pass
 
         return Response(status=status.HTTP_200_OK)
