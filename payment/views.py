@@ -29,7 +29,6 @@ from appstoreserverlibrary.signed_data_verifier import (
     VerificationException,
 )
 from django.conf import settings
-from django.contrib.sites.shortcuts import get_current_site
 from django.http import JsonResponse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiTypes, extend_schema
@@ -45,9 +44,25 @@ from payment.models import Account, Subscription
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
-PLACEHOLDER_STRIPE_PRODUCT_ID = "prod_implementme"
 DEFAULT_SUBSCRIPTION_TIER_CENTS = 2000
-SUBSCRIPTION_TIER_CENTS = (2000, 10000, 20000)
+SUBSCRIPTION_TIERS = {
+    2000: {
+        "plan": "pro",
+        "name": "Pro",
+        "price_setting": "OPENBASE_STRIPE_PRO_PRICE_ID",
+    },
+    6000: {
+        "plan": "pro_plus",
+        "name": "Pro+",
+        "price_setting": "OPENBASE_STRIPE_PRO_PLUS_PRICE_ID",
+    },
+    20000: {
+        "plan": "ultra",
+        "name": "Ultra",
+        "price_setting": "OPENBASE_STRIPE_ULTRA_PRICE_ID",
+    },
+}
+SUBSCRIPTION_TIER_CENTS = tuple(SUBSCRIPTION_TIERS)
 
 
 def subscription_tier_cents(value) -> int:
@@ -58,19 +73,26 @@ def subscription_tier_cents(value) -> int:
     return amount
 
 
-def build_site_checkout_price_data(site, *, monthly_tier_cents=None):
-    attributes = site.attributes
-    price_data = {
-        "recurring": {"interval": "month"},
-        "currency": "usd",
-        "unit_amount": subscription_tier_cents(monthly_tier_cents),
-    }
-    product_id = attributes.stripe_product_id.strip()
-    if product_id and product_id != PLACEHOLDER_STRIPE_PRODUCT_ID:
-        price_data["product"] = product_id
-    else:
-        price_data["product_data"] = {"name": site.name or site.domain}
-    return price_data
+def subscription_tier_name(value) -> str:
+    return SUBSCRIPTION_TIERS[subscription_tier_cents(value)]["name"]
+
+
+def subscription_tier_plan(value) -> str:
+    return SUBSCRIPTION_TIERS[subscription_tier_cents(value)]["plan"]
+
+
+def subscription_tier_price_id(value) -> str:
+    tier_cents = subscription_tier_cents(value)
+    tier = SUBSCRIPTION_TIERS[tier_cents]
+    price_ids = getattr(settings, "OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS", {})
+    price_id = price_ids.get(tier["plan"], "").strip()
+    if not price_id:
+        msg = (
+            f"Stripe Price ID is not configured for {tier['name']}. "
+            f"Set {tier['price_setting']}."
+        )
+        raise ValidationError(msg)
+    return price_id
 
 
 class AddValueView(generics.CreateAPIView):
@@ -411,22 +433,28 @@ class StripeCheckoutView(APIView):
             "monthly_tier_cents",
             DEFAULT_SUBSCRIPTION_TIER_CENTS,
         )
+        normalized_tier_cents = subscription_tier_cents(monthly_tier_cents)
 
         try:
-            site = get_current_site(request)
             session = stripe.checkout.Session.create(
                 customer=account.customer_id,
                 payment_method_types=["card"],
                 line_items=[
                     {
-                        "price_data": build_site_checkout_price_data(
-                            site,
-                            monthly_tier_cents=monthly_tier_cents,
-                        ),
+                        "price": subscription_tier_price_id(normalized_tier_cents),
                         "quantity": 1,
                     }
                 ],
                 mode="subscription",
+                subscription_data={
+                    "metadata": {
+                        "openbase_plan_key": subscription_tier_plan(
+                            normalized_tier_cents
+                        ),
+                        "openbase_plan": subscription_tier_name(normalized_tier_cents),
+                        "openbase_monthly_tier_cents": str(normalized_tier_cents),
+                    },
+                },
                 success_url=success_url,
                 cancel_url=cancel_url,
             )
