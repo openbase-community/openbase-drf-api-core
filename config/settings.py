@@ -295,24 +295,35 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 AUTH_USER_MODEL = "users.User"
 
 REDIS_URL = os.environ["REDIS_URL"]
-if not DEBUG and REDIS_URL.startswith("rediss://"):
+REDIS_USES_TLS = REDIS_URL.startswith("rediss://")
+if not DEBUG and REDIS_USES_TLS:
     REDIS_URL = f"{REDIS_URL}{'&' if '?' in REDIS_URL else '?'}ssl_cert_reqs=none"
 REDIS_HOST = urlparse(REDIS_URL).hostname
 REDIS_PORT = urlparse(REDIS_URL).port
 BROKER_URL = REDIS_URL
+
+
+def _redis_channel_layer_host(redis_url: str, *, debug: bool, uses_tls: bool):
+    if debug:
+        parsed_url = urlparse(redis_url)
+        return (parsed_url.hostname, parsed_url.port)
+    if uses_tls:
+        return {
+            "address": redis_url,
+            "ssl_cert_reqs": None,
+        }
+    return redis_url
+
 
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": [
-                (
-                    {
-                        "address": REDIS_URL,
-                        "ssl_cert_reqs": None,
-                    }
-                    if not DEBUG
-                    else (REDIS_HOST, REDIS_PORT)
+                _redis_channel_layer_host(
+                    REDIS_URL,
+                    debug=DEBUG,
+                    uses_tls=REDIS_USES_TLS,
                 ),
             ],
         },
