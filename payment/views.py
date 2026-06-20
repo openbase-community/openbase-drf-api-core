@@ -594,6 +594,22 @@ def expire_subscription_and_terminate_resources(
     return terminate_user_running_resources(account.user_owner)
 
 
+def stripe_subscription_item(subscription_object):
+    return subscription_object.get("items", {}).get("data", [{}])[0]
+
+
+def stripe_subscription_product_id(subscription_object) -> str:
+    return str(stripe_subscription_item(subscription_object).get("price", {}).get("product", ""))
+
+
+def stripe_subscription_period_end_timestamp(subscription_object):
+    return (
+        subscription_object.get("current_period_end")
+        or stripe_subscription_item(subscription_object).get("current_period_end")
+        or subscription_object.get("trial_end")
+    )
+
+
 class StripeWebhookView(APIView):
     permission_classes = [AllowAny]
 
@@ -649,13 +665,19 @@ class StripeWebhookView(APIView):
                 "customer.subscription.created",
                 "customer.subscription.updated",
             }:
-                # Get the subscription end date
-                current_period_end = datetime.fromtimestamp(
-                    subscription_object["current_period_end"], tz=UTC
+                period_end = stripe_subscription_period_end_timestamp(
+                    subscription_object
                 )
+                if not period_end:
+                    logger.error(
+                        "Stripe subscription webhook missing period end",
+                        account_id=account.pk,
+                        stripe_subscription_id=subscription_object.get("id"),
+                    )
+                    return Response(status=status.HTTP_400_BAD_REQUEST)
 
-                # Get the product name/ID for subscription_type
-                product_id = subscription_object["items"]["data"][0]["price"]["product"]
+                current_period_end = datetime.fromtimestamp(period_end, tz=UTC)
+                product_id = stripe_subscription_product_id(subscription_object)
 
                 _subscription, created = Subscription.objects.update_or_create(
                     account=account,

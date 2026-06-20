@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -240,6 +240,52 @@ def test_subscription_deleted_webhook_expires_subscription_and_terminates_resour
     subscription.refresh_from_db()
     assert subscription.expiration_date <= timezone.now()
     terminate_resources.assert_called_once_with(user)
+
+
+def test_subscription_created_webhook_syncs_item_period_end_for_trials():
+    User = get_user_model()
+    user = User.objects.create_user(email="ada@example.com")
+    account = Account.objects.get(user_owner=user)
+    account.customer_id = "cus_live_mode"
+    account.save(update_fields=["customer_id"])
+    period_end = 1782002940
+    event = SimpleNamespace(
+        type="customer.subscription.created",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_trial",
+                "customer": "cus_live_mode",
+                "status": "trialing",
+                "trial_end": period_end,
+                "items": {
+                    "data": [
+                        {
+                            "current_period_end": period_end,
+                            "price": {
+                                "id": "price_pro_test",
+                                "product": "prod_pro",
+                            },
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    request = APIRequestFactory().post(
+        "/api/stripe-webhook/",
+        b"{}",
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE="sig_test",
+    )
+
+    with patch("payment.views.stripe.Webhook.construct_event", return_value=event):
+        response = StripeWebhookView.as_view()(request)
+
+    subscription = Subscription.objects.get(account=account)
+    assert response.status_code == 200
+    assert subscription.subscription_type == "prod_pro"
+    assert subscription.expiration_date == datetime.fromtimestamp(period_end, UTC)
+    assert subscription.platform_data["status"] == "trialing"
 
 
 def _create_checkout(*, monthly_tier_cents=None):
