@@ -610,6 +610,15 @@ def stripe_subscription_period_end_timestamp(subscription_object):
     )
 
 
+def stripe_subscription_is_canceling(subscription_object) -> bool:
+    return bool(
+        subscription_object.get("cancel_at_period_end")
+        or subscription_object.get("canceled_at")
+        or subscription_object.get("ended_at")
+        or subscription_object.get("status") == "canceled"
+    )
+
+
 class StripeWebhookView(APIView):
     permission_classes = [AllowAny]
 
@@ -646,8 +655,8 @@ class StripeWebhookView(APIView):
                 )
                 return Response(status=status.HTTP_400_BAD_REQUEST)
 
-            subscription_is_canceling = bool(
-                subscription_object.get("cancel_at_period_end")
+            subscription_is_canceling = stripe_subscription_is_canceling(
+                subscription_object
             )
 
             if event.type == "customer.subscription.deleted" or subscription_is_canceling:

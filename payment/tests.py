@@ -242,6 +242,59 @@ def test_subscription_deleted_webhook_expires_subscription_and_terminates_resour
     terminate_resources.assert_called_once_with(user)
 
 
+def test_subscription_updated_webhook_expires_canceled_trial_and_terminates_resources():
+    User = get_user_model()
+    user = User.objects.create_user(email="ada@example.com")
+    account = Account.objects.get(user_owner=user)
+    account.customer_id = "cus_live_mode"
+    account.save(update_fields=["customer_id"])
+    subscription = Subscription.objects.create(
+        account=account,
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + timedelta(days=1),
+        platform_data={},
+    )
+    event = SimpleNamespace(
+        type="customer.subscription.updated",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_trial",
+                "customer": "cus_live_mode",
+                "status": "trialing",
+                "canceled_at": 1781917874,
+                "cancel_at": 1782002940,
+                "cancel_at_period_end": False,
+                "trial_end": 1782002940,
+                "items": {"data": [{"price": {"product": "prod_pro"}}]},
+            }
+        ),
+    )
+    request = APIRequestFactory().post(
+        "/api/stripe-webhook/",
+        b"{}",
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE="sig_test",
+    )
+
+    with (
+        patch("payment.views.stripe.Webhook.construct_event", return_value=event),
+        patch(
+            "payment.views.terminate_user_running_resources",
+            return_value={
+                "devspaces_terminated": 1,
+                "deployment_teardowns_queued": 2,
+            },
+        ) as terminate_resources,
+    ):
+        response = StripeWebhookView.as_view()(request)
+
+    assert response.status_code == 200
+    subscription.refresh_from_db()
+    assert subscription.expiration_date <= timezone.now()
+    assert subscription.platform_data["canceled_at"] == 1781917874
+    terminate_resources.assert_called_once_with(user)
+
+
 def test_subscription_created_webhook_syncs_item_period_end_for_trials():
     User = get_user_model()
     user = User.objects.create_user(email="ada@example.com")
