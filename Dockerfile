@@ -14,7 +14,7 @@ ENV UV_LINK_MODE=copy
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Install requirements
-RUN apt-get update && apt-get install -y bash ffmpeg curl postgresql-client git
+RUN apt-get update && apt-get install -y bash ffmpeg curl postgresql-client git awscli
 
 COPY nocache.txt /tmp/nocache.txt
 
@@ -29,8 +29,113 @@ RUN --mount=type=secret,id=gh_pat \
     fi && \
     uv sync --frozen --no-dev --no-editable && \
     uv pip install --python /app/.venv/bin/python . && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
-        uv pip install --python /app/.venv/bin/python -r /tmp/private_github_repos.txt; \
+        sed -n '1p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '2p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '3p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '4p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '5p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '6p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '7p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '8p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        sed -n '9p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
         git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
