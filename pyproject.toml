@@ -63,6 +63,7 @@ packages = [
 [tool.hatch.build.targets.wheel.force-include]
 "static" = "static"
 "templates" = "templates"
+"utils.py" = "utils.py"
 
 [tool.ruff]
 target-version = "py314"
