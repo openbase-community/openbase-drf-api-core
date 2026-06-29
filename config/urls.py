@@ -16,7 +16,7 @@ from oauth2_provider.urls import (
 )
 
 from config.admin import site as dynamic_admin_site
-from config.installed_apps import get_installed_apps
+from config.installed_apps import get_installed_apps, get_root_urlpatterns
 from config.jwt import jwks_view
 from sites import views
 
@@ -72,6 +72,8 @@ for app in get_installed_apps():
             prefix = "api/" + app.split(".")[0].removesuffix("_api") + "/"
 
     urlpatterns.append(path(prefix, include(f"{app}.urls")))
+
+urlpatterns += get_root_urlpatterns()
 
 # Add catch-all routes at the end
 urlpatterns += [

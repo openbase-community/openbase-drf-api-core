@@ -34,6 +34,20 @@ def get_installed_apps() -> list[str]:
     return apps
 
 
+@functools.cache
+def get_root_urlpatterns() -> list:
+    """Retrieve root URL patterns from registered entry points."""
+    urlpatterns = []
+    entry_points = importlib.metadata.entry_points()
+
+    for entry_point in entry_points.select(group="api_core.root_urls"):
+        url_list_func = entry_point.load()
+        if callable(url_list_func):
+            urlpatterns.extend(url_list_func())
+
+    return urlpatterns
+
+
 def merge_settings_from_module(mod, target_globals):
     names = getattr(mod, "__all__", None) or dir(mod)
     for name in names:
