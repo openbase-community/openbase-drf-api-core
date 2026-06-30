@@ -612,7 +612,8 @@ def stripe_subscription_period_end_timestamp(subscription_object):
 
 def stripe_subscription_is_canceling(subscription_object) -> bool:
     return bool(
-        subscription_object.get("cancel_at_period_end")
+        subscription_object.get("cancel_at")
+        or subscription_object.get("cancel_at_period_end")
         or subscription_object.get("canceled_at")
         or subscription_object.get("ended_at")
         or subscription_object.get("status") == "canceled"
@@ -701,5 +702,4 @@ class StripeWebhookView(APIView):
                     action="created" if created else "updated",
                     account_id=account.pk,
                 )
-
         return Response(status=status.HTTP_200_OK)
