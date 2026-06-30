@@ -2,13 +2,17 @@ from asgiref.sync import (
     iscoroutinefunction,
     sync_to_async,
 )
+from django.conf import settings
 from django.contrib import admin
 from django.contrib.sites.models import SITE_CACHE
 from django.contrib.sites.shortcuts import get_current_site
 from django.http import JsonResponse
 from django.utils.decorators import sync_and_async_middleware
 
-from config.email_verification import user_has_verified_email
+from config.email_verification import (
+    ensure_user_email_verified,
+    user_has_verified_email,
+)
 
 
 class RequireVerifiedEmailMiddleware:
@@ -19,18 +23,28 @@ class RequireVerifiedEmailMiddleware:
         user = getattr(request, "user", None)
         if (
             request.path.startswith("/api/")
+            and not self._is_exempt_path(request.path)
             and user
             and user.is_authenticated
             and not user_has_verified_email(user)
         ):
+            if settings.REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED:
+                ensure_user_email_verified(user)
+                return self.get_response(request)
             return JsonResponse(
                 {
                     "code": "email_not_verified",
-                    "detail": "Please verify your email address before using Openbase Cloud.",
+                    "detail": settings.REQUIRE_VERIFIED_EMAIL_MESSAGE,
                 },
                 status=403,
             )
         return self.get_response(request)
+
+    def _is_exempt_path(self, path: str) -> bool:
+        return any(
+            path.startswith(prefix)
+            for prefix in settings.REQUIRE_VERIFIED_EMAIL_EXEMPT_PATH_PREFIXES
+        )
 
 
 def _set_admin_headers(site):

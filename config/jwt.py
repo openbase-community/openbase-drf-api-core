@@ -11,7 +11,7 @@ from django.http import JsonResponse
 SUPERSEDES_SESSION_KEY = "headless_refresh_supersedes"
 
 
-class OpenbaseJWTTokenStrategy(JWTTokenStrategy):
+class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
     def get_claims(self, user) -> dict[str, str]:
         claims = super().get_claims(user)
         claims["iss"] = settings.HEADLESS_JWT_ISSUER
@@ -89,6 +89,9 @@ class OpenbaseJWTTokenStrategy(JWTTokenStrategy):
         session.modified = True
         session.save()
         return access_token, next_refresh_token
+
+
+OpenbaseJWTTokenStrategy = ApiCoreJWTTokenStrategy
 
 
 def jwks_view(_request):
