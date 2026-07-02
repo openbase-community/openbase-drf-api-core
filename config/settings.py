@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     "allauth",
     "allauth.account",
     "allauth.socialaccount",
+    "allauth.socialaccount.providers.apple",
+    "allauth.socialaccount.providers.github",
     "allauth.socialaccount.providers.google",
     "allauth.headless",
     "allauth.usersessions",
@@ -465,6 +467,9 @@ REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED = (
 )
 
 SOCIALACCOUNT_EMAIL_REQUIRED = True
+# Mobile apps start provider logins by opening /accounts/<provider>/login/
+# in a browser session; allow GET so no interstitial form is required.
+SOCIALACCOUNT_LOGIN_ON_GET = True
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 
