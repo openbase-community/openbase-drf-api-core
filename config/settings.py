@@ -427,6 +427,10 @@ ACCOUNT_LOGIN_BY_CODE_ENABLED = True
 ACCOUNT_CONFIRM_EMAIL_ON_GET = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True
+# With SOCIALACCOUNT_LOGIN_ON_GET enabled, connecting a provider must require
+# fresh authentication so a CSRF-forged GET connect cannot silently link an
+# attacker-controlled provider account.
+ACCOUNT_REAUTHENTICATION_REQUIRED = True
 
 if not DEBUG:
     ACCOUNT_DEFAULT_HTTP_PROTOCOL = "https"
