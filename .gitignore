@@ -5,6 +5,9 @@ workspace_requirements.txt
 app_requirements_docker.txt
 playground
 nocache.txt
+.Dockerfile.openbase-deploy.*
+.nocache.openbase-deploy.*
+.private_github_repos.openbase-deploy.*
 .pip-cache/
 
 schema.yml
