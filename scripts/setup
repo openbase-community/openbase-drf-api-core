@@ -102,4 +102,14 @@ else
     py manage.py ensure_google_oauth
 fi
 
+# Check for existing GitHub OAuth app and create if not present. Like Google,
+# this is opt-in: with no GITHUB_OAUTH_CREDENTIALS_JSON in the environment it
+# skips silently, so projects that do not want GitHub login are unaffected.
+echo "Checking for existing GitHub OAuth configuration..."
+if [ "${INTERACTIVE}" -eq 0 ]; then
+    py manage.py ensure_github_oauth --non-interactive
+else
+    py manage.py ensure_github_oauth
+fi
+
 popd >/dev/null
