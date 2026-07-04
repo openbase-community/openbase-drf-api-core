@@ -254,38 +254,8 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "DEFAULT_GENERATOR_CLASS": "config.spectacular_generators.TitleSettingGenerator",
     "COMPONENT_SPLIT_REQUEST": True,
-    "ENUM_NAME_OVERRIDES": {
-        "WooScoreReviewTargetTypeEnum": [
-            ("teacher", "Teacher"),
-            ("lineage", "Lineage"),
-            ("retreat_center", "Retreat center"),
-            ("retreat_series", "Retreat series"),
-        ],
-        "WooScoreProfileClaimTargetTypeEnum": [
-            ("teacher", "Teacher"),
-            ("retreat_center", "Retreat center"),
-            ("lineage", "Lineage"),
-        ],
-        "WooScoreReviewStatusEnum": [
-            ("pending", "Pending moderation"),
-            ("published", "Published"),
-            ("human_review", "Human review"),
-            ("rejected", "Rejected"),
-            ("removed", "Removed"),
-        ],
-        "WooScoreProfileClaimStatusEnum": [
-            ("pending", "Pending"),
-            ("auto_verified", "Auto verified"),
-            ("manual_review", "Manual review"),
-            ("approved", "Approved"),
-            ("rejected", "Rejected"),
-        ],
-        "WooScoreReviewQueueStatusEnum": [
-            ("open", "Open"),
-            ("upheld", "Upheld"),
-            ("dismissed", "Dismissed"),
-        ],
-    },
+    # Consuming apps contribute their own ENUM_NAME_OVERRIDES via the
+    # api_core.settings entry point; the backbone ships none of its own.
 }
 
 ASGI_APPLICATION = "config.routing.application"
@@ -390,6 +360,11 @@ CORS_ALLOW_CREDENTIALS = True
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+# The pricing menu is supplied by the consuming app's api_core.settings
+# entry-point module (see payment/tiers.py). Empty means "no tiers configured":
+# checkout rejects every tier until an app provides its table.
+SUBSCRIPTION_TIERS = {}
+DEFAULT_SUBSCRIPTION_TIER_CENTS = 0
 OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS = {
     "pro": os.environ.get("OPENBASE_STRIPE_PRO_PRICE_ID", ""),
     "pro_plus": os.environ.get("OPENBASE_STRIPE_PRO_PLUS_PRICE_ID", ""),
@@ -459,6 +434,15 @@ ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_USER_DISPLAY = lambda user: user.email  # noqa: E731
 
+# Merged over allauth's built-in defaults (see allauth AppSettings.RATE_LIMITS).
+# Mandatory email verification means every signup sends a verification email,
+# so bound signup and confirmation-email volume per IP to cap outbound email
+# cost from bot-driven mass signups. Values overridable via env.
+ACCOUNT_RATE_LIMITS = {
+    "signup": os.environ.get("ACCOUNT_RATE_LIMIT_SIGNUP", "10/m/ip,50/d/ip"),
+    "confirm_email": os.environ.get("ACCOUNT_RATE_LIMIT_CONFIRM_EMAIL", "1/3m/key"),
+}
+
 REQUIRE_VERIFIED_EMAIL_MESSAGE = os.environ.get(
     "REQUIRE_VERIFIED_EMAIL_MESSAGE",
     "Please verify your email address before continuing.",
@@ -466,7 +450,10 @@ REQUIRE_VERIFIED_EMAIL_MESSAGE = os.environ.get(
 REQUIRE_VERIFIED_EMAIL_EXEMPT_PATH_PREFIXES = [
     "/api/auth/",
 ]
-REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED = (
+# Auto-verifying authenticated users bypasses the primary anti-bot gate, so it
+# is only honored in local development (DEBUG); in production the env var is
+# ignored and email verification is always enforced.
+REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED = DEBUG and (
     os.environ.get("REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED", "0") == "1"
 )
 
@@ -480,11 +467,6 @@ SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 LOGIN_URL = "/account/login"
 LOGIN_REDIRECT_URL = "/"  # Where to redirect after login
 LOGOUT_REDIRECT_URL = "/"  # Where to redirect after logout
-
-BILLING_MAX_PROJECTS_PER_USER = int(os.getenv("BILLING_MAX_PROJECTS_PER_USER", "1"))
-BILLING_MAX_LIVEKIT_TOKENS_PER_DAY = int(
-    os.getenv("BILLING_MAX_LIVEKIT_TOKENS_PER_DAY", "100")
-)
 
 
 # Load settings.py from each app if it exists

@@ -4,6 +4,10 @@ from unittest.mock import patch
 
 import pytest
 import stripe
+from appstoreserverlibrary.signed_data_verifier import (
+    VerificationException,
+    VerificationStatus,
+)
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
@@ -11,6 +15,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from payment.models import Account, Subscription
 from payment.views import (
+    AppleWebhookView,
     StripeCheckoutView,
     StripeCustomerPortalView,
     StripeWebhookView,
@@ -24,11 +29,31 @@ TEST_PRICE_IDS = {
     "pro_plus": "price_pro_plus_test",
     "ultra": "price_ultra_test",
 }
+TEST_SUBSCRIPTION_TIERS = {
+    2000: {
+        "plan": "pro",
+        "name": "Pro",
+        "price_setting": "OPENBASE_STRIPE_PRO_PRICE_ID",
+        "trial_period_days": 1,
+    },
+    6000: {
+        "plan": "pro_plus",
+        "name": "Pro+",
+        "price_setting": "OPENBASE_STRIPE_PRO_PLUS_PRICE_ID",
+    },
+    20000: {
+        "plan": "ultra",
+        "name": "Ultra",
+        "price_setting": "OPENBASE_STRIPE_ULTRA_PRICE_ID",
+    },
+}
 
 
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
 )
 def test_checkout_uses_configured_stripe_price_for_default_tier():
     response, session_create = _create_checkout()
@@ -45,6 +70,8 @@ def test_checkout_uses_configured_stripe_price_for_default_tier():
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
 )
 def test_checkout_uses_requested_subscription_tier():
     response, session_create = _create_checkout(
@@ -68,6 +95,8 @@ def test_checkout_uses_requested_subscription_tier():
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
 )
 def test_checkout_rejects_unknown_subscription_tier():
     response, session_create = _create_checkout(
@@ -85,6 +114,8 @@ def test_checkout_rejects_unknown_subscription_tier():
         "pro_plus": "",
         "ultra": "price_ultra_test",
     },
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
 )
 def test_checkout_rejects_unconfigured_subscription_tier():
     response, session_create = _create_checkout(monthly_tier_cents=6000)
@@ -97,6 +128,8 @@ def test_checkout_rejects_unconfigured_subscription_tier():
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
 )
 def test_checkout_replaces_missing_stripe_customer_and_retries():
     User = get_user_model()
@@ -237,7 +270,7 @@ def test_subscription_deleted_webhook_expires_subscription_and_terminates_resour
     with (
         patch("payment.views.stripe.Webhook.construct_event", return_value=event),
         patch(
-            "payment.views.terminate_user_running_resources",
+            "payment.views.run_subscription_cancellation_hooks",
             return_value={
                 "devspaces_terminated": 1,
                 "deployment_teardowns_queued": 2,
@@ -290,7 +323,7 @@ def test_subscription_updated_webhook_expires_canceled_trial_and_terminates_reso
     with (
         patch("payment.views.stripe.Webhook.construct_event", return_value=event),
         patch(
-            "payment.views.terminate_user_running_resources",
+            "payment.views.run_subscription_cancellation_hooks",
             return_value={
                 "devspaces_terminated": 1,
                 "deployment_teardowns_queued": 2,
@@ -343,7 +376,7 @@ def test_subscription_updated_webhook_expires_future_cancel_at_without_canceled_
     with (
         patch("payment.views.stripe.Webhook.construct_event", return_value=event),
         patch(
-            "payment.views.terminate_user_running_resources",
+            "payment.views.run_subscription_cancellation_hooks",
             return_value={
                 "devspaces_terminated": 1,
                 "deployment_teardowns_queued": 2,
@@ -395,7 +428,7 @@ def test_subscription_updated_webhook_expires_cancel_at_period_end():
     with (
         patch("payment.views.stripe.Webhook.construct_event", return_value=event),
         patch(
-            "payment.views.terminate_user_running_resources",
+            "payment.views.run_subscription_cancellation_hooks",
             return_value={
                 "devspaces_terminated": 1,
                 "deployment_teardowns_queued": 2,
@@ -455,6 +488,24 @@ def test_subscription_created_webhook_syncs_item_period_end_for_trials():
     assert subscription.subscription_type == "prod_pro"
     assert subscription.expiration_date == datetime.fromtimestamp(period_end, UTC)
     assert subscription.platform_data["status"] == "trialing"
+
+
+def test_apple_webhook_rejects_unverifiable_payload():
+    request = APIRequestFactory().post(
+        "/api/apple-webhook/",
+        {"signedPayload": "not-a-real-jws"},
+        format="json",
+    )
+
+    with patch(
+        "payment.views.verify_and_decode_notification",
+        side_effect=VerificationException(VerificationStatus.VERIFICATION_FAILURE),
+    ):
+        response = AppleWebhookView.as_view()(request)
+
+    # A 2xx would tell Apple the notification was processed and it would
+    # never retry, silently dropping the subscription update.
+    assert response.status_code == 400
 
 
 def _create_checkout(*, monthly_tier_cents=None):

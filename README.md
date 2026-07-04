@@ -29,10 +29,15 @@ Deployment metadata is stored outside the repo at:
 
 `~/.openbase/deployments/<deployment-name>/deployment.toml`
 
-If that file does not exist for `openbase-api-core`, initialize it before building or applying:
+Each deployment picks its own stack name and the app package(s) to install on
+top of the backbone via `--app-requirement`. The example below uses the stack
+name `openbase-api-core` and installs `openbase-cloud-api` as one example
+consuming app; substitute your own stack name and app requirement(s).
+
+If that stack's metadata does not exist yet, initialize it before building or applying:
 
 ```bash
-openbase-deploy init-stack openbase-api-core \
+openbase-deploy init-stack <stack-name> \
   --web-hostname api.example.com \
   --web-hostname app.example.com \
   --cdn-hostname assets.example.com \

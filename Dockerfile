@@ -33,6 +33,10 @@ RUN --mount=type=secret,id=gh_pat \
         git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
     fi
 
+# Private repos are installed one-per-RUN (sed -n '1p', '2p', ...) on purpose:
+# each repo gets its own Docker layer so editing or bumping one private
+# requirement only busts that repo's cached layer, not all of them. This
+# repetition is intentional and must not be collapsed into a single loop.
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \

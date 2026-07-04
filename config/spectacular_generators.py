@@ -3,12 +3,12 @@ import os
 from django.contrib.sites.models import Site
 from drf_spectacular.generators import SchemaGenerator
 
-DEFAULT_SCHEMA_SITE_NAME = "OpenBase"
+DEFAULT_SCHEMA_SITE_NAME = "API"
 
 
 def _schema_site_name(request) -> str:
     if request is None:
-        return os.environ.get("OPENBASE_API_SCHEMA_SITE_NAME", DEFAULT_SCHEMA_SITE_NAME)
+        return os.environ.get("API_SCHEMA_SITE_NAME", DEFAULT_SCHEMA_SITE_NAME)
 
     try:
         return Site.objects.get_current(request).name

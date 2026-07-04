@@ -28,8 +28,8 @@ from appstoreserverlibrary.signed_data_verifier import (
     SignedDataVerifier,
     VerificationException,
 )
-from django.apps import apps
 from django.conf import settings
+from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiTypes, extend_schema
@@ -41,60 +41,16 @@ from rest_framework.views import APIView
 
 from payment import serializers
 from payment.models import Account, Subscription
+from payment.subscription_hooks import run_subscription_cancellation_hooks
+from payment.tiers import (
+    subscription_tier,
+    subscription_tier_price_id,
+    validate_subscription_tier_cents,
+)
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
-DEFAULT_SUBSCRIPTION_TIER_CENTS = 2000
-PRO_TRIAL_PERIOD_DAYS = 1
-SUBSCRIPTION_TIERS = {
-    2000: {
-        "plan": "pro",
-        "name": "Pro",
-        "price_setting": "OPENBASE_STRIPE_PRO_PRICE_ID",
-    },
-    6000: {
-        "plan": "pro_plus",
-        "name": "Pro+",
-        "price_setting": "OPENBASE_STRIPE_PRO_PLUS_PRICE_ID",
-    },
-    20000: {
-        "plan": "ultra",
-        "name": "Ultra",
-        "price_setting": "OPENBASE_STRIPE_ULTRA_PRICE_ID",
-    },
-}
-SUBSCRIPTION_TIER_CENTS = tuple(SUBSCRIPTION_TIERS)
-
-
-def subscription_tier_cents(value) -> int:
-    amount = int(value or DEFAULT_SUBSCRIPTION_TIER_CENTS)
-    if amount not in SUBSCRIPTION_TIER_CENTS:
-        msg = "Unsupported subscription tier."
-        raise ValidationError(msg)
-    return amount
-
-
-def subscription_tier_name(value) -> str:
-    return SUBSCRIPTION_TIERS[subscription_tier_cents(value)]["name"]
-
-
-def subscription_tier_plan(value) -> str:
-    return SUBSCRIPTION_TIERS[subscription_tier_cents(value)]["plan"]
-
-
-def subscription_tier_price_id(value) -> str:
-    tier_cents = subscription_tier_cents(value)
-    tier = SUBSCRIPTION_TIERS[tier_cents]
-    price_ids = getattr(settings, "OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS", {})
-    price_id = price_ids.get(tier["plan"], "").strip()
-    if not price_id:
-        msg = (
-            f"Stripe Price ID is not configured for {tier['name']}. "
-            f"Set {tier['price_setting']}."
-        )
-        raise ValidationError(msg)
-    return price_id
 
 
 def stripe_error_is_missing_customer(error: stripe.error.StripeError) -> bool:
@@ -137,6 +93,20 @@ class AddValueView(generics.CreateAPIView):
                 error=e.user_message,
             )
             return JsonResponse({"error": e.user_message}, status=400)
+        except stripe.error.StripeError as e:
+            # Non-card Stripe failures (rate limit, API, network) are not the
+            # user's fault; surface a generic message and a 502 rather than a
+            # raw 500 from an uncaught exception.
+            logger.exception(
+                "Stripe payment error",
+                user_id=request.user.id,
+                amount=amount,
+                error=str(e),
+            )
+            return JsonResponse(
+                {"error": "Payment could not be processed. Please try again."},
+                status=502,
+            )
 
 
 class AddValueHistoryView(generics.ListAPIView):
@@ -174,7 +144,6 @@ def load_root_certificates():
 
 
 def get_create_apple_subscription(subscription_info: JWSTransactionDecodedPayload):
-    # assert isinstance(subscription_info, JWSTransactionDecodedPayload)
     product_id = subscription_info.productId
     expires_timestamp = subscription_info.expiresDate
     environment = subscription_info.environment
@@ -190,29 +159,30 @@ def get_create_apple_subscription(subscription_info: JWSTransactionDecodedPayloa
         "Received subscription payload", subscription_info=str(subscription_info)
     )
 
-    try:
-        account = Account.objects.get(apple_uuid=app_account_token)
-    except Account.DoesNotExist:
-        logger.exception(
-            "Account not found for apple subscription", apple_uuid=app_account_token
+    with transaction.atomic():
+        account = (
+            Account.objects.select_for_update()
+            .filter(apple_uuid=app_account_token)
+            .first()
         )
-        return None
+        if account is None:
+            # Apple redelivers on non-2xx, but retrying an unknown
+            # appAccountToken can never succeed, so ack and log loudly.
+            logger.error(
+                "Account not found for apple subscription",
+                apple_uuid=app_account_token,
+            )
+            return None
 
-    subscription, created = Subscription.objects.get_or_create(
-        account=account,
-        defaults={
-            "subscription_type": product_id,
-            "expiration_date": expires_date,
-            "platform_data": str(subscription_info),
-            "is_sandbox": environment == Environment.SANDBOX,
-        },
-    )
-    if not created:
-        subscription.expiration_date = expires_date
-        subscription.subscription_type = product_id
-        subscription.platform_data = str(subscription_info)
-        subscription.is_sandbox = environment == Environment.SANDBOX
-        subscription.save()
+        subscription, _created = Subscription.objects.update_or_create(
+            account=account,
+            defaults={
+                "subscription_type": product_id,
+                "expiration_date": expires_date,
+                "platform_data": str(subscription_info),
+                "is_sandbox": environment == Environment.SANDBOX,
+            },
+        )
 
     return subscription
 
@@ -290,11 +260,19 @@ class AppleWebhookView(APIView):
                 subscription_info = verify_and_decode_signed_transaction(
                     signed_transaction_info
                 )
-                get_create_apple_subscription(subscription_info)
         except VerificationException as e:
-            logger.exception("Verification failed", error=str(e))
+            # Never ack a payload we could not verify: a 2xx here would tell
+            # Apple the notification was processed and it would never retry.
+            logger.exception("Apple webhook verification failed", error=str(e))
+            return Response(
+                {"error": "Signed payload verification failed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Handle Apple's server-to-server notifications here
+        if type_ in (NotificationTypeV2.SUBSCRIBED, NotificationTypeV2.DID_RENEW):
+            # Persistence errors propagate as a 500 so Apple redelivers.
+            get_create_apple_subscription(subscription_info)
+
         return Response({"message": "Received"})
 
 
@@ -450,11 +428,8 @@ class StripeCheckoutView(APIView):
             "cancel_url",
             f"{base_url}/settings/",
         )
-        monthly_tier_cents = serializer.validated_data.get(
-            "monthly_tier_cents",
-            DEFAULT_SUBSCRIPTION_TIER_CENTS,
-        )
-        normalized_tier_cents = subscription_tier_cents(monthly_tier_cents)
+        monthly_tier_cents = serializer.validated_data.get("monthly_tier_cents")
+        normalized_tier_cents = validate_subscription_tier_cents(monthly_tier_cents)
 
         try:
             session = create_checkout_session(
@@ -466,7 +441,9 @@ class StripeCheckoutView(APIView):
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
             if not stripe_error_is_missing_customer(e):
-                logger.exception("Stripe checkout session creation failed", error=str(e))
+                logger.exception(
+                    "Stripe checkout session creation failed", error=str(e)
+                )
                 return Response(
                     {"error": "Failed to create checkout session"},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -492,15 +469,17 @@ class StripeCheckoutView(APIView):
 
 
 def create_checkout_session(*, account, normalized_tier_cents, success_url, cancel_url):
+    tier = subscription_tier(normalized_tier_cents)
     subscription_data = {
         "metadata": {
-            "openbase_plan_key": subscription_tier_plan(normalized_tier_cents),
-            "openbase_plan": subscription_tier_name(normalized_tier_cents),
+            "openbase_plan_key": tier["plan"],
+            "openbase_plan": tier["name"],
             "openbase_monthly_tier_cents": str(normalized_tier_cents),
         },
     }
-    if normalized_tier_cents == DEFAULT_SUBSCRIPTION_TIER_CENTS:
-        subscription_data["trial_period_days"] = PRO_TRIAL_PERIOD_DAYS
+    trial_period_days = tier.get("trial_period_days")
+    if trial_period_days:
+        subscription_data["trial_period_days"] = trial_period_days
 
     return stripe.checkout.Session.create(
         customer=account.customer_id,
@@ -518,80 +497,32 @@ def create_checkout_session(*, account, normalized_tier_cents, success_url, canc
     )
 
 
-def terminate_user_running_resources(user) -> dict[str, int]:
-    result = {
-        "devspaces_terminated": 0,
-        "deployment_teardowns_queued": 0,
-    }
-    if apps.is_installed("openbase_api.devspaces"):
-        result["devspaces_terminated"] = terminate_user_devspaces(user)
-    if apps.is_installed("openbase_api.deployment"):
-        result["deployment_teardowns_queued"] = queue_user_deployment_teardowns(user)
-    return result
-
-
-def terminate_user_devspaces(user) -> int:
-    try:
-        from openbase_api.devspaces.usage_limits import (
-            terminate_running_devspaces_for_user,
-        )
-    except ImportError:
-        from openbase_api.devspaces.ec2 import DevSpaceEC2Manager
-        from openbase_api.devspaces.models import DevSpace
-        from openbase_api.devspaces.usage_limits import accrue_running_devspace_usage
-
-        manager = DevSpaceEC2Manager()
-        terminated_count = 0
-        for devspace in DevSpace.objects.filter(
-            user=user,
-            status__in=(DevSpace.Status.RUNNING, DevSpace.Status.STARTING),
-        ):
-            accrue_running_devspace_usage(devspace)
-            if devspace.ec2_instance_id:
-                manager.terminate_instance(devspace.ec2_instance_id)
-            devspace.mark_terminated()
-            terminated_count += 1
-        return terminated_count
-
-    return terminate_running_devspaces_for_user(user)
-
-
-def queue_user_deployment_teardowns(user) -> int:
-    try:
-        from openbase_api.deployment.services import (
-            queue_subscription_cancellation_teardowns,
-        )
-    except ImportError:
-        from openbase_api.deployment.services import queue_monthly_spend_limit_teardowns
-
-        return queue_monthly_spend_limit_teardowns(user)
-
-    return queue_subscription_cancellation_teardowns(user)
-
-
 def expire_subscription_and_terminate_resources(
     account: Account,
     *,
     platform_data,
 ) -> dict[str, int]:
-    Subscription.objects.update_or_create(
-        account=account,
-        defaults={
-            "subscription_type": str(
-                (platform_data.get("items", {}).get("data", [{}])[0])
-                .get("price", {})
-                .get("product", "")
-            ),
-            "expiration_date": timezone.now(),
-            "platform_data": platform_data,
-        },
-    )
+    with transaction.atomic():
+        Account.objects.select_for_update().get(pk=account.pk)
+        Subscription.objects.update_or_create(
+            account=account,
+            defaults={
+                "subscription_type": str(
+                    (platform_data.get("items", {}).get("data", [{}])[0])
+                    .get("price", {})
+                    .get("product", "")
+                ),
+                "expiration_date": timezone.now(),
+                "platform_data": platform_data,
+            },
+        )
     if not account.user_owner:
-        return {
-            "devspaces_terminated": 0,
-            "deployment_teardowns_queued": 0,
-        }
-    return terminate_user_running_resources(account.user_owner)
+        return {}
+    # Hooks run after the expiration commit: provider teardown (cloud API
+    # calls) must never sit inside a DB transaction. If a hook fails, the
+    # error propagates as a 5xx, the payment provider redelivers the webhook,
+    # the expiration upsert is a no-op, and the idempotent hooks retry.
+    return run_subscription_cancellation_hooks(account.user_owner)
 
 
 def stripe_subscription_item(subscription_object):
@@ -599,7 +530,11 @@ def stripe_subscription_item(subscription_object):
 
 
 def stripe_subscription_product_id(subscription_object) -> str:
-    return str(stripe_subscription_item(subscription_object).get("price", {}).get("product", ""))
+    return str(
+        stripe_subscription_item(subscription_object)
+        .get("price", {})
+        .get("product", "")
+    )
 
 
 def stripe_subscription_period_end_timestamp(subscription_object):
@@ -660,7 +595,10 @@ class StripeWebhookView(APIView):
                 subscription_object
             )
 
-            if event.type == "customer.subscription.deleted" or subscription_is_canceling:
+            if (
+                event.type == "customer.subscription.deleted"
+                or subscription_is_canceling
+            ):
                 cleanup_result = expire_subscription_and_terminate_resources(
                     account,
                     platform_data=subscription_object,
@@ -669,7 +607,7 @@ class StripeWebhookView(APIView):
                     "Marked subscription as expired and queued resource termination",
                     account_id=account.pk,
                     event_type=event.type,
-                    **cleanup_result,
+                    cleanup_result=cleanup_result,
                 )
             elif event.type in {
                 "customer.subscription.created",
@@ -689,14 +627,18 @@ class StripeWebhookView(APIView):
                 current_period_end = datetime.fromtimestamp(period_end, tz=UTC)
                 product_id = stripe_subscription_product_id(subscription_object)
 
-                _subscription, created = Subscription.objects.update_or_create(
-                    account=account,
-                    defaults={
-                        "subscription_type": product_id,
-                        "expiration_date": current_period_end,
-                        "platform_data": subscription_object,
-                    },
-                )
+                # Lock the account row so concurrent deliveries for the same
+                # customer (Stripe retries, out-of-order events) serialize.
+                with transaction.atomic():
+                    Account.objects.select_for_update().get(pk=account.pk)
+                    _subscription, created = Subscription.objects.update_or_create(
+                        account=account,
+                        defaults={
+                            "subscription_type": product_id,
+                            "expiration_date": current_period_end,
+                            "platform_data": subscription_object,
+                        },
+                    )
                 logger.info(
                     "Subscription synced from Stripe webhook",
                     action="created" if created else "updated",

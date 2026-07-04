@@ -33,7 +33,7 @@ class Command(BaseCommand):
             "s3_frontend_folder": "only-used-in-production",
             "stripe_product_id": "prod_implementme",
             "stripe_price_cents": 2000,
-            "from_email": "team@my-app.openbase.app",
+            "from_email": os.environ.get("DEFAULT_FROM_EMAIL", "team@example.com"),
         }
 
         for site_id, site_defaults in site_definitions:
@@ -47,7 +47,9 @@ class Command(BaseCommand):
                 domain=domain,
                 defaults={"name": domain},
             )
-            SiteAttributes.objects.get_or_create(site=site, defaults=site_attribute_defaults)
+            SiteAttributes.objects.get_or_create(
+                site=site, defaults=site_attribute_defaults
+            )
 
         Site.objects.clear_cache()
         self.stdout.write(
@@ -88,11 +90,15 @@ class Command(BaseCommand):
             related_manager = relation.related_model._default_manager
 
             if relation.one_to_one:
-                related_object = related_manager.filter(**{field_name: source_site}).first()
+                related_object = related_manager.filter(
+                    **{field_name: source_site}
+                ).first()
                 if related_object is None:
                     continue
 
-                target_exists = related_manager.filter(**{field_name: target_site}).exists()
+                target_exists = related_manager.filter(
+                    **{field_name: target_site}
+                ).exists()
                 if target_exists:
                     related_object.delete()
                     continue
@@ -130,7 +136,9 @@ class Command(BaseCommand):
         return f"default-site-{site_id}-{uuid4().hex}.invalid"[:100]
 
     def _extra_domains(self, options):
-        domains = {domain.strip().lower() for domain in options["domains"] if domain.strip()}
+        domains = {
+            domain.strip().lower() for domain in options["domains"] if domain.strip()
+        }
         if options["from_allowed_hosts"]:
             domains.update(
                 host.strip().lower()

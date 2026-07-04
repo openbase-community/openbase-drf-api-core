@@ -30,11 +30,9 @@ class StripeCustomerPortalRequestSerializer(serializers.Serializer):
 class StripeCheckoutRequestSerializer(serializers.Serializer):
     success_url = serializers.URLField(required=False)
     cancel_url = serializers.URLField(required=False)
-    monthly_tier_cents = serializers.ChoiceField(
-        choices=(2000, 6000, 20000),
-        required=False,
-        default=2000,
-    )
+    # Validated against the app-supplied SUBSCRIPTION_TIERS table in the view;
+    # a ChoiceField would freeze one project's pricing menu into api-core.
+    monthly_tier_cents = serializers.IntegerField(required=False)
 
 
 class URLResponseSerializer(serializers.Serializer):

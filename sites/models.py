@@ -34,7 +34,7 @@ class SiteAttributes(models.Model):
         help_text="The price in cents for the Stripe subscription",
     )
     from_email = models.EmailField(
-        default="team@my-app.openbase.app",
+        blank=True,
         help_text="Default from email address for this site",
     )
 
