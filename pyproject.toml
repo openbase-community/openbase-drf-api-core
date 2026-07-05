@@ -23,7 +23,9 @@ dependencies = [
     "pgvector>=0.4",
     "psycopg[binary]>=3.3",
     "python-dotenv>=1.2",
-    "redis>=7.1",
+    # redis 8 breaks taskiq-redis blocking reads (worker crash loop): a fresh
+    # resolve during app-requirement installs must stay on the redis 7 line.
+    "redis>=7.1,<8",
     "resend>=2.27",
     "sentry-sdk[django]>=2.57",
     "stripe>=14.1",
