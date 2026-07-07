@@ -26,6 +26,7 @@ class RequireVerifiedEmailMiddleware:
             and not self._is_exempt_path(request.path)
             and user
             and user.is_authenticated
+            and not user.is_staff
             and not user_has_verified_email(user)
         ):
             if settings.REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED:

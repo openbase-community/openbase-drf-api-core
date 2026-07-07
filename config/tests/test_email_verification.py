@@ -104,6 +104,27 @@ def test_require_verified_email_allows_verified_api_request(rf):
     assert response.status_code == 200
 
 
+@override_settings(
+    REQUIRE_VERIFIED_EMAIL_EXEMPT_PATH_PREFIXES=["/api/auth/"],
+    REQUIRE_VERIFIED_EMAIL_AUTO_VERIFY_AUTHENTICATED=False,
+)
+def test_require_verified_email_allows_staff_api_request(rf):
+    user = _create_user("staff@example.com", is_staff=True)
+    EmailAddress.objects.create(
+        user=user,
+        email=user.email,
+        primary=True,
+        verified=False,
+    )
+    request = rf.get("/api/users/me/")
+    request.user = user
+
+    response = RequireVerifiedEmailMiddleware(_ok_response)(request)
+
+    assert response.status_code == 200
+    assert user_has_verified_email(user) is False
+
+
 def test_require_verified_email_ignores_anonymous_request(rf):
     request = rf.get("/api/contact/")
     request.user = SimpleNamespace(is_authenticated=False)
@@ -113,12 +134,12 @@ def test_require_verified_email_ignores_anonymous_request(rf):
     assert response.status_code == 200
 
 
-def _create_user(email):
+def _create_user(email, **extra_fields):
     with patch(
         "users.models.stripe.Customer.create",
         return_value=SimpleNamespace(id="cus_test"),
     ):
-        return get_user_model().objects.create_user(email=email)
+        return get_user_model().objects.create_user(email=email, **extra_fields)
 
 
 def _ok_response(_request):
