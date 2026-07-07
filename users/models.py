@@ -17,6 +17,14 @@ from rest_framework.authtoken.models import Token
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def stripe_is_configured():
+    api_key = settings.STRIPE_SECRET_KEY
+    if not api_key:
+        return False
+    stripe.api_key = api_key
+    return True
+
+
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         """
@@ -76,7 +84,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             account = Account.objects.create(user_owner=self)
         else:
             account = self.account
-        if not account.customer_id:
+        if not account.customer_id and stripe_is_configured():
             with contextlib.suppress(stripe.error.AuthenticationError):
                 self.create_stripe_customer(account)
         return account
@@ -100,14 +108,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         account = await Account.objects.filter(user_owner=self).afirst()
         if account is None:
             account = await Account.objects.acreate(user_owner=self)
-        if not account.customer_id:
-            customer = await stripe.Customer.create_async(
-                email=self.email,
-                metadata={"user_id": self.id},
-            )
-            customer_id = customer.id
-            account.customer_id = customer_id
-            await account.asave()
+        if not account.customer_id and stripe_is_configured():
+            with contextlib.suppress(stripe.error.AuthenticationError):
+                customer = await stripe.Customer.create_async(
+                    email=self.email,
+                    metadata={"user_id": self.id},
+                )
+                customer_id = customer.id
+                account.customer_id = customer_id
+                await account.asave(update_fields=["customer_id"])
         return account
 
     def save(self, *args, **kwargs):
