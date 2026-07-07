@@ -19,6 +19,8 @@ from payment.views import (
     StripeCheckoutView,
     StripeCustomerPortalView,
     StripeWebhookView,
+    stripe_subscription_item,
+    stripe_subscription_product_id,
 )
 
 pytestmark = pytest.mark.django_db
@@ -488,6 +490,52 @@ def test_subscription_created_webhook_syncs_item_period_end_for_trials():
     assert subscription.subscription_type == "prod_pro"
     assert subscription.expiration_date == datetime.fromtimestamp(period_end, UTC)
     assert subscription.platform_data["status"] == "trialing"
+
+
+def test_stripe_subscription_item_prefers_licensed_item_over_metered_addons():
+    subscription_object = {
+        "items": {
+            "data": [
+                {
+                    "price": {
+                        "id": "price_payg",
+                        "product": "prod_payg",
+                        "recurring": {"interval": "month", "usage_type": "metered"},
+                    }
+                },
+                {
+                    "price": {
+                        "id": "price_pro_test",
+                        "product": "prod_pro",
+                        "recurring": {"interval": "month", "usage_type": "licensed"},
+                    }
+                },
+            ]
+        }
+    }
+
+    item = stripe_subscription_item(subscription_object)
+
+    assert item["price"]["id"] == "price_pro_test"
+    assert stripe_subscription_product_id(subscription_object) == "prod_pro"
+
+
+def test_stripe_subscription_item_falls_back_to_first_item_when_all_metered():
+    subscription_object = {
+        "items": {
+            "data": [
+                {
+                    "price": {
+                        "id": "price_payg",
+                        "product": "prod_payg",
+                        "recurring": {"interval": "month", "usage_type": "metered"},
+                    }
+                },
+            ]
+        }
+    }
+
+    assert stripe_subscription_product_id(subscription_object) == "prod_payg"
 
 
 def test_apple_webhook_rejects_unverifiable_payload():

@@ -507,11 +507,7 @@ def expire_subscription_and_terminate_resources(
         Subscription.objects.update_or_create(
             account=account,
             defaults={
-                "subscription_type": str(
-                    (platform_data.get("items", {}).get("data", [{}])[0])
-                    .get("price", {})
-                    .get("product", "")
-                ),
+                "subscription_type": stripe_subscription_product_id(platform_data),
                 "expiration_date": timezone.now(),
                 "platform_data": platform_data,
             },
@@ -526,7 +522,15 @@ def expire_subscription_and_terminate_resources(
 
 
 def stripe_subscription_item(subscription_object):
-    return subscription_object.get("items", {}).get("data", [{}])[0]
+    items = subscription_object.get("items", {}).get("data", [{}])
+    # Subscriptions may carry metered add-on items (e.g. pay-as-you-go
+    # overage prices); the licensed flat-fee item is the one that identifies
+    # the plan and billing period.
+    for item in items:
+        recurring = item.get("price", {}).get("recurring") or {}
+        if recurring.get("usage_type") != "metered":
+            return item
+    return items[0] if items else {}
 
 
 def stripe_subscription_product_id(subscription_object) -> str:
