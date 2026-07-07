@@ -5,6 +5,13 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def backfill_owner_memberships(apps, schema_editor):
+    Team = apps.get_model('teams', 'Team')
+    TeamMember = apps.get_model('teams', 'TeamMember')
+    for team in Team.objects.select_related('owner').iterator():
+        TeamMember.objects.get_or_create(team=team, user=team.owner)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -25,4 +32,5 @@ class Migration(migrations.Migration):
                 'constraints': [models.UniqueConstraint(fields=('team', 'user'), name='unique_team_member')],
             },
         ),
+        migrations.RunPython(backfill_owner_memberships, migrations.RunPython.noop),
     ]
