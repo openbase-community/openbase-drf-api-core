@@ -25,12 +25,12 @@ COPY private_github_repos.txt /tmp/private_github_repos.txt
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     uv sync --frozen --no-dev --no-editable && \
     uv pip install --python /app/.venv/bin/python . && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 # Private repos are installed one-per-RUN (sed -n '1p', '2p', ...) on purpose:
@@ -40,109 +40,109 @@ RUN --mount=type=secret,id=gh_pat \
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '1p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '2p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '3p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '4p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '5p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '6p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '7p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '8p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 RUN --mount=type=secret,id=gh_pat \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf "https://github.com/"; \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '9p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
     if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://${GH_PAT}:x-oauth-basic@github.com/".insteadOf; \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
 
 # Creates a non-root user with an explicit UID and adds permission to access the /app folder
