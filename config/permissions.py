@@ -1,3 +1,12 @@
+"""Async permission classes for `adrf` async views.
+
+WARNING: every `has_permission` here is `async`. DRF's *synchronous* permission
+checking does `if not permission.has_permission(...)`, and a coroutine object is
+always truthy, so using these classes on a plain (sync) DRF view silently GRANTS
+access to everyone. Use them only with `adrf` async views that `await`
+permission checks; for sync views use `rest_framework.permissions.*`.
+"""
+
 from rest_framework.permissions import SAFE_METHODS
 
 _required_site_key = "required_site_key"
@@ -52,4 +61,6 @@ class IsAuthenticatedForSite(IsAuthenticated):
         required_site_id = getattr(view, _required_site_key, None)
         if not required_site_id:
             return False
-        return request.user.site == required_site_id
+        # `user.site` is a ForeignKey, so compare the id column, not the related
+        # object (which never equals a bare id and denied everyone).
+        return request.user.site_id == required_site_id

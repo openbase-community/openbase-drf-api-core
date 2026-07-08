@@ -413,7 +413,7 @@ ACCOUNT_ADAPTER = "config.allauth_adapter.AccountAdapter"
 HEADLESS_ADAPTER = "config.allauth_adapter.HeadlessAdapter"
 
 HEADLESS_ENABLED = True
-HEADLESS_ONLY = True
+HEADLESS_ONLY = False
 HEADLESS_TOKEN_STRATEGY = "config.jwt.ApiCoreJWTTokenStrategy"  # noqa: S105
 HEADLESS_JWT_PRIVATE_KEY = os.environ["HEADLESS_JWT_PRIVATE_KEY"].replace("\\n", "\n")
 HEADLESS_JWT_ISSUER = os.environ.get("HEADLESS_JWT_ISSUER", "api-core")

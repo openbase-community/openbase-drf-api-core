@@ -1,8 +1,9 @@
 import os
 
 from allauth.account.models import EmailAddress
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management import BaseCommand, call_command
+from django.core.management import BaseCommand, CommandError, call_command
 
 
 class Command(BaseCommand):
@@ -69,8 +70,21 @@ class Command(BaseCommand):
         )
 
     def _create_non_interactive_superuser(self, *, User, email, password):
+        explicit_password = password or os.environ.get("DEV_SUPERUSER_PASSWORD")
+        # Never provision a superuser with the well-known default password outside
+        # DEBUG: a prod pipeline invoking this without DEV_SUPERUSER_PASSWORD would
+        # otherwise create a test@example.com / "test" backdoor with a pre-verified
+        # email. An explicit password is still honored in any environment.
+        if not explicit_password and not settings.DEBUG:
+            msg = (
+                "Refusing to create a development superuser with the default "
+                "password while DEBUG is off. Set DEV_SUPERUSER_PASSWORD or pass "
+                "--password to provision a superuser in a non-debug environment."
+            )
+            raise CommandError(msg)
+
         email = email or os.environ.get("DEV_SUPERUSER_EMAIL", "test@example.com")
-        password = password or os.environ.get("DEV_SUPERUSER_PASSWORD", "test")
+        password = explicit_password or "test"
 
         superuser = User.objects.filter(email=email).first()
         if superuser is None:
@@ -86,5 +100,7 @@ class Command(BaseCommand):
         superuser.is_superuser = True
         superuser.is_active = True
         superuser.set_password(password)
-        superuser.save(update_fields=["is_staff", "is_superuser", "is_active", "password"])
+        superuser.save(
+            update_fields=["is_staff", "is_superuser", "is_active", "password"]
+        )
         return superuser
