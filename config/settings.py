@@ -461,7 +461,13 @@ SOCIALACCOUNT_EMAIL_REQUIRED = True
 # in a browser session; allow GET so no interstitial form is required.
 SOCIALACCOUNT_LOGIN_ON_GET = True
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "VERIFIED_EMAIL": True,
+    },
+}
 
 LOGIN_URL = "/account/login"
 LOGIN_REDIRECT_URL = "/"  # Where to redirect after login

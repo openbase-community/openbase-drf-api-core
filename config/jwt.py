@@ -7,11 +7,24 @@ from allauth.headless.tokens.strategies.jwt import JWTTokenStrategy, internal
 from django.conf import settings
 from django.http import JsonResponse
 
+from config.jwt_analytics import notify_jwt_issued
+
 # Maps newly issued refresh-token jti -> the jti it superseded.
 SUPERSEDES_SESSION_KEY = "headless_refresh_supersedes"
 
 
 class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
+    def create_access_token_payload(self, request) -> dict | None:
+        payload = super().create_access_token_payload(request)
+        if payload is not None:
+            notify_jwt_issued(
+                user=request.user,
+                session=request.session,
+                request=request,
+                source="headless_token_payload",
+            )
+        return payload
+
     def get_claims(self, user) -> dict[str, str]:
         claims = super().get_claims(user)
         claims["iss"] = settings.HEADLESS_JWT_ISSUER
@@ -55,6 +68,11 @@ class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
         )
         if not headless_app_settings.JWT_ROTATE_REFRESH_TOKEN:
             session.save()
+            notify_jwt_issued(
+                user=user,
+                session=session,
+                source="refresh_token",
+            )
             return access_token, refresh_token
 
         jti = payload["jti"]
@@ -88,6 +106,11 @@ class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
 
         session.modified = True
         session.save()
+        notify_jwt_issued(
+            user=user,
+            session=session,
+            source="refresh_token",
+        )
         return access_token, next_refresh_token
 
 

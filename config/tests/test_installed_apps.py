@@ -25,16 +25,30 @@ class FakeEntryPoint:
 def test_package_settings_cannot_override_core_account_verification():
     target_globals = {
         "ACCOUNT_EMAIL_VERIFICATION": "mandatory",
+        "SOCIALACCOUNT_EMAIL_AUTHENTICATION": True,
+        "SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT": True,
+        "SOCIALACCOUNT_EMAIL_VERIFICATION": "none",
+        "SOCIALACCOUNT_PROVIDERS": {"google": {"VERIFIED_EMAIL": True}},
         "OPENBASE_CODER_CLI_OAUTH_CLIENT_ID": "openbase-coder-cli",
     }
     package_settings = SimpleNamespace(
         ACCOUNT_EMAIL_VERIFICATION="none",
+        SOCIALACCOUNT_EMAIL_AUTHENTICATION=False,
+        SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT=False,
+        SOCIALACCOUNT_EMAIL_VERIFICATION="mandatory",
+        SOCIALACCOUNT_PROVIDERS={"google": {"VERIFIED_EMAIL": False}},
         OPENBASE_CODER_CLI_OAUTH_CLIENT_ID="package-client",
     )
 
     merge_settings_from_module(package_settings, target_globals)
 
     assert target_globals["ACCOUNT_EMAIL_VERIFICATION"] == "mandatory"
+    assert target_globals["SOCIALACCOUNT_EMAIL_AUTHENTICATION"] is True
+    assert target_globals["SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT"] is True
+    assert target_globals["SOCIALACCOUNT_EMAIL_VERIFICATION"] == "none"
+    assert target_globals["SOCIALACCOUNT_PROVIDERS"] == {
+        "google": {"VERIFIED_EMAIL": True}
+    }
     assert target_globals["OPENBASE_CODER_CLI_OAUTH_CLIENT_ID"] == "package-client"
 
 
