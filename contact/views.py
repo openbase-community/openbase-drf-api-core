@@ -7,12 +7,14 @@ from rest_framework.permissions import AllowAny
 
 from config.email import get_request_from_email
 from contact import serializers
+from contact.throttles import ContactSubmissionThrottle
 
 
 class SubmitContactView(generics.CreateAPIView):
     serializer_class = serializers.ContactSubmissionSerializer
     queryset = serializers.ContactSubmission.objects.all()
     permission_classes = [AllowAny]
+    throttle_classes = [ContactSubmissionThrottle]
 
     def perform_create(self, serializer):
         site = get_current_site(self.request)
@@ -21,7 +23,9 @@ class SubmitContactView(generics.CreateAPIView):
 
     def _send_admin_notification(self, submission):
         if not settings.CONTACT_NOTIFICATION_EMAIL:
-            msg = "CONTACT_NOTIFICATION_EMAIL must be set to send contact notifications."
+            msg = (
+                "CONTACT_NOTIFICATION_EMAIL must be set to send contact notifications."
+            )
             raise ValueError(msg)
 
         site = submission.site

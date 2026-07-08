@@ -1,6 +1,10 @@
+import os
+from unittest import mock
+
 import pytest
 from django.contrib.sites.models import Site
 from django.core import mail
+from django.core.cache import cache
 from django.test import override_settings
 
 from contact.models import ContactSubmission
@@ -53,3 +57,31 @@ def test_submit_contact_sends_admin_notification_email(client, contact_site):
     assert "Ada Lovelace" in email.body
     assert "ada@example.com" in email.body
     assert "I need help with billing." in email.body
+
+
+@override_settings(
+    ALLOWED_HOSTS=["contact.example.com"],
+    CONTACT_NOTIFICATION_EMAIL="admin@example.com",
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    SITE_ID=None,
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "contact-throttle-test",
+        }
+    },
+)
+def test_submit_contact_is_rate_limited_per_ip(client, contact_site):
+    cache.clear()
+    payload = {"name": "Ada", "email": "ada@example.com", "message": "hello"}
+    with mock.patch.dict(os.environ, {"CONTACT_SUBMISSION_THROTTLE_RATE": "3/hour"}):
+        statuses = [
+            client.post(
+                "/api/contact/", payload, HTTP_HOST=contact_site.domain
+            ).status_code
+            for _ in range(4)
+        ]
+
+    assert statuses[:3] == [201, 201, 201]
+    assert statuses[3] == 429
+    assert ContactSubmission.objects.count() == 3
