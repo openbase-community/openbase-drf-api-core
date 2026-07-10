@@ -112,4 +112,14 @@ else
     py manage.py ensure_github_oauth
 fi
 
+# Check for existing Apple OAuth app and create if not present. Opt-in like
+# the others: with no APPLE_OAUTH_CREDENTIALS_JSON in the environment it
+# skips silently, so projects without Sign in with Apple are unaffected.
+echo "Checking for existing Apple OAuth configuration..."
+if [ "${INTERACTIVE}" -eq 0 ]; then
+    py manage.py ensure_apple_oauth --non-interactive
+else
+    py manage.py ensure_apple_oauth
+fi
+
 popd >/dev/null

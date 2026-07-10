@@ -13,10 +13,24 @@ consuming project that does not configure that provider.
 
 import json
 import os
+from typing import NamedTuple
 
 from allauth.socialaccount.models import SocialApp
 from django.contrib.sites.models import Site
 from django.core.management import BaseCommand, CommandError
+
+
+class SocialAppCredentials(NamedTuple):
+    """Field values for a provider's ``SocialApp`` row.
+
+    ``key`` and ``settings`` are only used by providers that need them (e.g.
+    Apple stores its team id in ``key`` and the signing key in ``settings``).
+    """
+
+    client_id: str
+    client_secret: str
+    key: str = ""
+    settings: dict = {}
 
 
 def parse_client_credentials(raw, *, provider_label):
@@ -46,8 +60,11 @@ def parse_client_credentials(raw, *, provider_label):
     return client_id, client_secret
 
 
-def upsert_social_app(*, provider, name, client_id, client_secret, sites):
+def upsert_social_app(
+    *, provider, name, client_id, client_secret, sites, key="", settings=None
+):
     """Create or update the ``SocialApp`` for ``provider`` and attach ``sites``."""
+    settings = settings or {}
     app = SocialApp.objects.filter(
         provider=provider,
         client_id=client_id,
@@ -59,13 +76,23 @@ def upsert_social_app(*, provider, name, client_id, client_secret, sites):
             name=name,
             client_id=client_id,
             secret=client_secret,
-            key="",
+            key=key,
             provider_id="",
-            settings={},
+            settings=settings,
         )
-    elif app.name != name:
-        app.name = name
-        app.save(update_fields=["name"])
+    else:
+        update_fields = []
+        if app.name != name:
+            app.name = name
+            update_fields.append("name")
+        if app.key != key:
+            app.key = key
+            update_fields.append("key")
+        if app.settings != settings:
+            app.settings = settings
+            update_fields.append("settings")
+        if update_fields:
+            app.save(update_fields=update_fields)
 
     existing_app_site_ids = set(app.sites.values_list("id", flat=True))
     missing_sites = [site for site in sites if site.id not in existing_app_site_ids]
@@ -90,6 +117,17 @@ class EnsureOAuthSocialAppCommand(BaseCommand):
     provider = None
     provider_label = None
     env_prefix = None
+
+    def parse_credentials(self, raw):
+        """Parse the raw credentials JSON into ``SocialAppCredentials``.
+
+        Subclasses override this when their provider needs more than a
+        ``client_id``/``client_secret`` pair.
+        """
+        client_id, client_secret = parse_client_credentials(
+            raw, provider_label=self.provider_label
+        )
+        return SocialAppCredentials(client_id=client_id, client_secret=client_secret)
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -131,14 +169,14 @@ class EnsureOAuthSocialAppCommand(BaseCommand):
         if credentials_raw is None:
             return
 
-        client_id, client_secret = parse_client_credentials(
-            credentials_raw, provider_label=self.provider_label
-        )
+        credentials = self.parse_credentials(credentials_raw)
         upsert_social_app(
             provider=self.provider,
             name=options["name"],
-            client_id=client_id,
-            client_secret=client_secret,
+            client_id=credentials.client_id,
+            client_secret=credentials.client_secret,
+            key=credentials.key,
+            settings=credentials.settings,
             sites=sites,
         )
         self.stdout.write(
