@@ -361,6 +361,11 @@ class StripeCustomerPortalView(APIView):
         },
     )
     def post(self, request, *args, **kwargs):
+        serializer = serializers.StripeCustomerPortalRequestSerializer(
+            data=request.data
+        )
+        serializer.is_valid(raise_exception=True)
+
         account = request.user.get_account()
         if not account.customer_id:
             return Response(
@@ -374,7 +379,7 @@ class StripeCustomerPortalView(APIView):
         default_return_url = f"{protocol}://{domain}/settings/"
 
         # Allow override of return URL but default to the current site
-        return_url = request.data.get("return_url", default_return_url)
+        return_url = serializer.validated_data.get("return_url", default_return_url)
 
         try:
             try:
