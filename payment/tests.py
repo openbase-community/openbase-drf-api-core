@@ -586,3 +586,164 @@ def _create_checkout(*, monthly_tier_cents=None):
         response = StripeCheckoutView.as_view()(request)
 
     return response, session_create
+
+
+def _stripe_subscription(platform_data):
+    return Subscription(
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + timedelta(days=30),
+        platform_data=platform_data,
+    )
+
+
+def test_stripe_subscription_id_returns_sub_id():
+    subscription = _stripe_subscription({"id": "sub_123"})
+    assert subscription.stripe_subscription_id == "sub_123"
+    assert subscription.is_stripe_billed
+
+
+@pytest.mark.parametrize(
+    "platform_data",
+    [
+        {},
+        {"id": "apple-original-transaction"},
+        {"apple": "receipt"},
+        None,
+        "not-a-dict",
+    ],
+)
+def test_non_stripe_platform_data_is_not_stripe_billed(platform_data):
+    subscription = _stripe_subscription(platform_data)
+    assert subscription.stripe_subscription_id is None
+    assert not subscription.is_stripe_billed
+
+
+def test_has_price_item_matches_price_id():
+    subscription = _stripe_subscription(
+        {
+            "id": "sub_123",
+            "items": {
+                "data": [
+                    {"price": {"id": "price_flat"}},
+                    {"price": {"id": "price_metered"}},
+                    "malformed-item",
+                    {"price": "malformed-price"},
+                ]
+            },
+        }
+    )
+    assert subscription.has_price_item("price_metered")
+    assert not subscription.has_price_item("price_other")
+
+
+@pytest.mark.parametrize(
+    "platform_data",
+    [
+        {},
+        {"items": "not-a-dict"},
+        {"items": {"data": "not-a-list"}},
+        {"items": {"data": []}},
+    ],
+)
+def test_stripe_price_items_tolerates_malformed_payloads(platform_data):
+    subscription = _stripe_subscription(platform_data)
+    assert subscription.stripe_price_items() == []
+    assert not subscription.has_price_item("price_flat")
+    assert subscription.monthly_licensed_price_cents is None
+
+
+def test_monthly_licensed_price_cents_uses_flat_monthly_item():
+    subscription = _stripe_subscription(
+        {
+            "items": {
+                "data": [
+                    {
+                        "price": {
+                            "unit_amount": 6000,
+                            "recurring": {"interval": "month"},
+                        }
+                    }
+                ]
+            }
+        }
+    )
+    assert subscription.monthly_licensed_price_cents == 6000
+
+
+def test_monthly_licensed_price_cents_normalizes_yearly_with_ceiling():
+    subscription = _stripe_subscription(
+        {
+            "items": {
+                "data": [
+                    {
+                        "price": {
+                            "unit_amount": 240001,
+                            "recurring": {"interval": "year"},
+                        }
+                    }
+                ]
+            }
+        }
+    )
+    assert subscription.monthly_licensed_price_cents == 20001
+
+
+def test_monthly_licensed_price_cents_skips_metered_items():
+    subscription = _stripe_subscription(
+        {
+            "items": {
+                "data": [
+                    {
+                        "price": {
+                            "id": "price_payg",
+                            "unit_amount": None,
+                            "recurring": {
+                                "interval": "month",
+                                "usage_type": "metered",
+                            },
+                        }
+                    },
+                    {
+                        "price": {
+                            "unit_amount": 6000,
+                            "recurring": {"interval": "month"},
+                        }
+                    },
+                ]
+            }
+        }
+    )
+    assert subscription.monthly_licensed_price_cents == 6000
+
+
+def test_monthly_licensed_price_cents_divides_multi_month_intervals():
+    subscription = _stripe_subscription(
+        {
+            "items": {
+                "data": [
+                    {
+                        "price": {
+                            "unit_amount": 6001,
+                            "recurring": {"interval": "month", "interval_count": 3},
+                        }
+                    }
+                ]
+            }
+        }
+    )
+    assert subscription.monthly_licensed_price_cents == 2001
+
+
+def test_stripe_customer_id_reads_account():
+    User = get_user_model()
+    user = User.objects.create_user(email="grace@example.com")
+    account = Account.objects.get(user_owner=user)
+    account.customer_id = "cus_typed"
+    account.save(update_fields=["customer_id"])
+    subscription = Subscription.objects.create(
+        account=account,
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + timedelta(days=30),
+        platform_data={"id": "sub_typed"},
+    )
+    assert subscription.stripe_customer_id == "cus_typed"

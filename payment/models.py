@@ -68,3 +68,82 @@ class Subscription(models.Model):
 
     def is_active(self):
         return self.expiration_date > timezone.now()
+
+    # ``platform_data`` holds the raw provider payload (a Stripe subscription
+    # object for Stripe-billed subscriptions, an Apple receipt for App Store
+    # ones, or arbitrary data for manual grants). The typed accessors below are
+    # deliberately defensive about its shape so consuming apps never need to
+    # parse the raw payload themselves.
+
+    @property
+    def stripe_subscription_id(self) -> str | None:
+        """The ``sub_...`` Stripe subscription id, or ``None`` when this
+        subscription is not billed through Stripe."""
+        if not isinstance(self.platform_data, dict):
+            return None
+        subscription_id = str(self.platform_data.get("id", ""))
+        if not subscription_id.startswith("sub_"):
+            return None
+        return subscription_id
+
+    @property
+    def is_stripe_billed(self) -> bool:
+        return self.stripe_subscription_id is not None
+
+    @property
+    def stripe_customer_id(self) -> str:
+        return self.account.customer_id
+
+    def stripe_price_items(self) -> list[dict]:
+        """Item dicts from ``platform_data["items"]["data"]`` that carry a dict
+        ``price``; empty for non-Stripe or malformed payloads."""
+        if not isinstance(self.platform_data, dict):
+            return []
+        items = self.platform_data.get("items")
+        if not isinstance(items, dict):
+            return []
+        data = items.get("data")
+        if not isinstance(data, list):
+            return []
+        return [
+            item
+            for item in data
+            if isinstance(item, dict) and isinstance(item.get("price"), dict)
+        ]
+
+    def has_price_item(self, price_id: str) -> bool:
+        return any(
+            item["price"].get("id") == price_id for item in self.stripe_price_items()
+        )
+
+    @property
+    def monthly_licensed_price_cents(self) -> int | None:
+        """Monthly cents of the licensed (non-metered) flat-fee Stripe item.
+
+        Metered add-on items (e.g. usage-overage prices) are skipped. Yearly
+        and multi-interval prices are normalized to one month with ceiling
+        division. Returns ``None`` when ``platform_data`` carries no usable
+        licensed price (non-Stripe subscriptions, manual grants).
+        """
+        for item in self.stripe_price_items():
+            price = item["price"]
+            recurring = price.get("recurring")
+            recurring = recurring if isinstance(recurring, dict) else {}
+            if recurring.get("usage_type") == "metered":
+                continue
+            unit_amount = price.get("unit_amount")
+            if unit_amount is None:
+                continue
+            interval = recurring.get("interval", "month")
+            interval_count = recurring.get("interval_count")
+            if interval_count in (None, 0):
+                interval_count = 1
+            amount = int(unit_amount)
+            if interval == "year":
+                divisor = 12 * int(interval_count)
+                return (amount + divisor - 1) // divisor
+            if interval == "month":
+                divisor = int(interval_count)
+                return (amount + divisor - 1) // divisor
+            return amount
+        return None
