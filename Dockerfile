@@ -16,11 +16,8 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # Install requirements
 RUN apt-get update && apt-get install -y bash ffmpeg curl postgresql-client git awscli
 
-COPY nocache.txt /tmp/nocache.txt
-
 WORKDIR /app
 COPY . /app
-COPY private_github_repos.txt /tmp/private_github_repos.txt
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
@@ -40,6 +37,10 @@ RUN --mount=type=secret,id=gh_pat \
     if [ -n "${GH_PAT}" ]; then \
         git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
     fi
+
+# Copied after the uv sync layer so a requirements change (a private repo
+# moving to a new SHA) only re-runs the per-repo installs below, not the sync.
+COPY private_github_repos.txt /tmp/private_github_repos.txt
 
 # Private repos are installed one-per-RUN (sed -n '1p', '2p', ...) on purpose:
 # each repo gets its own Docker layer so editing or bumping one private
