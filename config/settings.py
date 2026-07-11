@@ -395,7 +395,14 @@ AUTHENTICATION_BACKENDS = (
 # AllAuth settings
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_LOGIN_METHODS = {"email"}
-ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_VERIFICATION = os.environ.get(
+    "ACCOUNT_EMAIL_VERIFICATION", "mandatory"
+).strip().lower() or "mandatory"
+if ACCOUNT_EMAIL_VERIFICATION not in {"mandatory", "optional", "none"}:
+    msg = (
+        "ACCOUNT_EMAIL_VERIFICATION must be one of: mandatory, optional, or none."
+    )
+    raise ValueError(msg)
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
 ACCOUNT_LOGIN_BY_CODE_ENABLED = True
