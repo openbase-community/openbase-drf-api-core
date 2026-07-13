@@ -43,9 +43,10 @@ RUN --mount=type=secret,id=gh_pat \
 COPY private_github_repos.txt /tmp/private_github_repos.txt
 
 # Private repos are installed one-per-RUN (sed -n '1p', '2p', ...) on purpose:
-# each repo gets its own Docker layer so editing or bumping one private
-# requirement only busts that repo's cached layer, not all of them. This
-# repetition is intentional and must not be collapsed into a single loop.
+# each of the first repo slots gets its own Docker layer so editing or bumping
+# one private requirement only busts that repo's cached layer, not all of them.
+# Requirements beyond the explicit slots are installed in the final catch-all
+# layer so they are never silently skipped.
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
     GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
@@ -218,6 +219,30 @@ RUN --mount=type=secret,id=gh_pat \
     fi && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '9p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
+    fi && \
+    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
+        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
+    fi
+
+RUN --mount=type=secret,id=gh_pat \
+    --mount=type=secret,id=openbase_platform_github_token \
+    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
+    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
+    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
+        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
+    fi && \
+    if [ -n "${GH_PAT}" ]; then \
+        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -s /tmp/private_github_repos.txt ]; then \
+        tail -n +10 /tmp/private_github_repos.txt | while IFS= read -r requirement; do \
+            if [ -n "${requirement}" ]; then \
+                uv pip install --python /app/.venv/bin/python "${requirement}"; \
+            fi; \
+        done; \
     fi && \
     if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
         git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
