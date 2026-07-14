@@ -380,10 +380,17 @@ APPLE_STOREKIT_P8_CONTENTS = os.environ.get("APPLE_STOREKIT_P8_CONTENTS")
 
 ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"] if not DEBUG else ""
 
+# Error observability. No-op unless SENTRY_DSN is set, so any environment
+# without a DSN (local/dev, or a project that hasn't configured one) runs
+# without Sentry. Optional SENTRY_ENVIRONMENT / SENTRY_TRACES_SAMPLE_RATE tune
+# the environment label and performance-tracing sample rate (default 0 =
+# errors only). send_default_pii stays at the SDK default (False).
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
+        environment=os.environ.get("SENTRY_ENVIRONMENT") or None,
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )
 
 # Add these settings near the authentication-related settings
@@ -395,13 +402,12 @@ AUTHENTICATION_BACKENDS = (
 # AllAuth settings
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_LOGIN_METHODS = {"email"}
-ACCOUNT_EMAIL_VERIFICATION = os.environ.get(
-    "ACCOUNT_EMAIL_VERIFICATION", "mandatory"
-).strip().lower() or "mandatory"
+ACCOUNT_EMAIL_VERIFICATION = (
+    os.environ.get("ACCOUNT_EMAIL_VERIFICATION", "mandatory").strip().lower()
+    or "mandatory"
+)
 if ACCOUNT_EMAIL_VERIFICATION not in {"mandatory", "optional", "none"}:
-    msg = (
-        "ACCOUNT_EMAIL_VERIFICATION must be one of: mandatory, optional, or none."
-    )
+    msg = "ACCOUNT_EMAIL_VERIFICATION must be one of: mandatory, optional, or none."
     raise ValueError(msg)
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
