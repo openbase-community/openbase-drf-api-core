@@ -384,12 +384,15 @@ ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"] if not DEBUG else ""
 # without a DSN (local/dev, or a project that hasn't configured one) runs
 # without Sentry. Optional SENTRY_ENVIRONMENT / SENTRY_TRACES_SAMPLE_RATE tune
 # the environment label and performance-tracing sample rate (default 0 =
-# errors only). send_default_pii stays at the SDK default (False).
+# errors only). Local variables are excluded because application frames can
+# contain short-lived credentials (for example, workspace provisioning bundles).
+# send_default_pii stays at the SDK default (False).
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         environment=os.environ.get("SENTRY_ENVIRONMENT") or None,
+        include_local_variables=False,
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )
 
