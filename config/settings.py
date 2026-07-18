@@ -370,7 +370,19 @@ OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS = {
     "pro_plus": os.environ.get("OPENBASE_STRIPE_PRO_PLUS_PRICE_ID", ""),
     "ultra": os.environ.get("OPENBASE_STRIPE_ULTRA_PRICE_ID", ""),
 }
-CONTACT_NOTIFICATION_EMAIL = os.environ.get("CONTACT_NOTIFICATION_EMAIL")
+DEFAULT_CONTACT_NOTIFICATION_EMAILS = [
+    "gabe@openbase.cloud",
+    "lucas@openbase.cloud",
+    "zoky@openbase.cloud",
+]
+CONTACT_NOTIFICATION_EMAILS = [
+    email.strip()
+    for email in os.environ.get(
+        "CONTACT_NOTIFICATION_EMAILS",
+        ",".join(DEFAULT_CONTACT_NOTIFICATION_EMAILS),
+    ).split(",")
+    if email.strip()
+]
 
 APPLE_BUNDLE_ID = os.environ.get("APPLE_BUNDLE_ID")
 APPLE_APP_APPLE_ID = os.environ.get("APPLE_APP_APPLE_ID")

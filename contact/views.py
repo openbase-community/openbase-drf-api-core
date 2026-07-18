@@ -22,9 +22,9 @@ class SubmitContactView(generics.CreateAPIView):
         self._send_admin_notification(submission)
 
     def _send_admin_notification(self, submission):
-        if not settings.CONTACT_NOTIFICATION_EMAIL:
+        if not settings.CONTACT_NOTIFICATION_EMAILS:
             msg = (
-                "CONTACT_NOTIFICATION_EMAIL must be set to send contact notifications."
+                "CONTACT_NOTIFICATION_EMAILS must be set to send contact notifications."
             )
             raise ValueError(msg)
 
@@ -35,7 +35,7 @@ class SubmitContactView(generics.CreateAPIView):
                 "contact/admin_notification.txt",
                 {"submission": submission, "site": site},
             ),
-            to=[settings.CONTACT_NOTIFICATION_EMAIL],
+            to=settings.CONTACT_NOTIFICATION_EMAILS,
             from_email=get_request_from_email(self.request),
             reply_to=[submission.email],
         )

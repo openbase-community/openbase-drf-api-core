@@ -29,7 +29,11 @@ def contact_site():
 
 @override_settings(
     ALLOWED_HOSTS=["contact.example.com"],
-    CONTACT_NOTIFICATION_EMAIL="admin@example.com",
+    CONTACT_NOTIFICATION_EMAILS=[
+        "gabe@openbase.cloud",
+        "lucas@openbase.cloud",
+        "zoky@openbase.cloud",
+    ],
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     SITE_ID=None,
 )
@@ -50,7 +54,11 @@ def test_submit_contact_sends_admin_notification_email(client, contact_site):
 
     email = mail.outbox[0]
 
-    assert email.to == ["admin@example.com"]
+    assert email.to == [
+        "gabe@openbase.cloud",
+        "lucas@openbase.cloud",
+        "zoky@openbase.cloud",
+    ]
     assert email.reply_to == ["ada@example.com"]
     assert email.from_email == "Contact Example <team@contact.example.com>"
     assert email.subject == "New contact submission for Contact Example"
@@ -61,7 +69,7 @@ def test_submit_contact_sends_admin_notification_email(client, contact_site):
 
 @override_settings(
     ALLOWED_HOSTS=["contact.example.com"],
-    CONTACT_NOTIFICATION_EMAIL="admin@example.com",
+    CONTACT_NOTIFICATION_EMAILS=["gabe@openbase.cloud"],
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     SITE_ID=None,
     CACHES={
