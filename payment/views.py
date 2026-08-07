@@ -497,6 +497,9 @@ def create_checkout_session(*, account, normalized_tier_cents, success_url, canc
         ],
         mode="subscription",
         subscription_data=subscription_data,
+        # Promotions are managed entirely in the Stripe Dashboard (coupons +
+        # promotion codes); this surfaces the code entry field at checkout.
+        allow_promotion_codes=True,
         success_url=success_url,
         cancel_url=cancel_url,
     )

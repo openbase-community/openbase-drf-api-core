@@ -66,6 +66,7 @@ def test_checkout_uses_configured_stripe_price_for_default_tier():
     assert session_create.call_args.kwargs["line_items"] == [
         {"price": "price_pro_test", "quantity": 1}
     ]
+    assert session_create.call_args.kwargs["allow_promotion_codes"] is True
     assert subscription_data["trial_period_days"] == 1
 
 
