@@ -747,3 +747,24 @@ def test_stripe_customer_id_reads_account():
         platform_data={"id": "sub_typed"},
     )
     assert subscription.stripe_customer_id == "cus_typed"
+
+
+def test_is_trialing_reads_stripe_status():
+    trialing = Subscription(
+        subscription_type="prod_pro",
+        expiration_date=timezone.now(),
+        platform_data={"id": "sub_trial", "status": "trialing"},
+    )
+    active = Subscription(
+        subscription_type="prod_pro",
+        expiration_date=timezone.now(),
+        platform_data={"id": "sub_live", "status": "active"},
+    )
+    manual = Subscription(
+        subscription_type="manual_lifetime_infinite_cap",
+        expiration_date=timezone.now(),
+        platform_data=None,
+    )
+    assert trialing.is_trialing
+    assert not active.is_trialing
+    assert not manual.is_trialing

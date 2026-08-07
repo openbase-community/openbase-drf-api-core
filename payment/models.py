@@ -91,6 +91,14 @@ class Subscription(models.Model):
         return self.stripe_subscription_id is not None
 
     @property
+    def is_trialing(self) -> bool:
+        """True while a Stripe-billed subscription is in its free-trial
+        period; always False for Apple or manual subscriptions."""
+        if not isinstance(self.platform_data, dict):
+            return False
+        return self.platform_data.get("status") == "trialing"
+
+    @property
     def stripe_customer_id(self) -> str:
         return self.account.customer_id
 
