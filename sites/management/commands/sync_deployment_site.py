@@ -1,14 +1,26 @@
 from django.contrib.sites.models import Site
-from django.core.management import BaseCommand, CommandError
+from django.core.management import BaseCommand, CommandError, call_command
 
 from sites.models import SiteAttributes
+
+# Opt-in social providers to (re)provision for a freshly synced deployment
+# site. Each command is non-interactive and idempotent: a provider without
+# environment credentials is skipped, so this is a no-op unless the deployment
+# actually configured that provider.
+DEPLOYMENT_OAUTH_PROVIDER_COMMANDS = (
+    "ensure_google_oauth",
+    "ensure_github_oauth",
+    "ensure_apple_oauth",
+)
 
 
 class Command(BaseCommand):
     help = "Create or update a deployment-backed Site and SiteAttributes record."
 
     def add_arguments(self, parser):
-        parser.add_argument("--domain", required=True, help="Primary public hostname for the site.")
+        parser.add_argument(
+            "--domain", required=True, help="Primary public hostname for the site."
+        )
         parser.add_argument(
             "--s3-custom-domain",
             default="",
@@ -42,3 +54,15 @@ class Command(BaseCommand):
         SiteAttributes.objects.update_or_create(site=site, defaults=defaults)
         Site.objects.clear_cache()
         self.stdout.write(self.style.SUCCESS(f"Synced deployment site for {domain}"))
+
+        # A deployment resolves its social providers by request host (in
+        # production SITE_ID is None), so each provider's SocialApp must be
+        # attached to THIS domain's Site. Now that the Site exists, provision
+        # the opt-in providers from their environment credentials so social
+        # login works on tenant deployments and not only on the control plane.
+        for provider_command in DEPLOYMENT_OAUTH_PROVIDER_COMMANDS:
+            call_command(
+                provider_command,
+                non_interactive=True,
+                site_domains=[domain],
+            )

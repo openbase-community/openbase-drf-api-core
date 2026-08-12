@@ -10,15 +10,19 @@
 
   {% get_providers as socialaccount_providers %}
 
+  {% if socialaccount_providers %}
   <div class="social-login">
-    <a href="{% provider_login_url 'google' %}" class="google-login-button">
-      Sign in with Google
+    {% for provider in socialaccount_providers %}
+    <a href="{% provider_login_url provider.id %}" class="{{ provider.id }}-login-button">
+      {% blocktrans with provider_name=provider.name %}Sign in with {{ provider_name }}{% endblocktrans %}
     </a>
+    {% endfor %}
   </div>
 
   <div class="login-divider">
     <span>or</span>
   </div>
+  {% endif %}
 
   <form class="login" method="POST" action="{% url 'account_login' %}">
     {% csrf_token %}

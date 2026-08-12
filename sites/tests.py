@@ -6,8 +6,8 @@ from django.core.management import call_command
 from django.test import override_settings
 from django.urls import path
 
-from contact.models import ContactSubmission
 from config.admin import site as dynamic_admin_site
+from contact.models import ContactSubmission
 from sites.models import SiteAttributes
 
 urlpatterns = [
@@ -58,7 +58,9 @@ def test_get_app_list_shows_all_apps_when_site_has_no_restrictions(rf):
     assert {"users", "teams", "payment"}.issubset(app_labels)
 
 
-@override_settings(ALLOWED_HOSTS=["localhost", "other.example.com"], DEBUG=True, SITE_ID=1)
+@override_settings(
+    ALLOWED_HOSTS=["localhost", "other.example.com"], DEBUG=True, SITE_ID=1
+)
 def test_debug_site_id_always_uses_default_site(rf):
     call_command("ensure_default_sites")
     localhost_site = Site.objects.get(pk=1)
@@ -73,7 +75,9 @@ def test_debug_site_id_always_uses_default_site(rf):
 
 
 def test_ensure_default_sites_preserves_existing_non_default_sites():
-    local_network_site = Site.objects.create(domain="0.0.0.0:8000", name="Local Network")
+    local_network_site = Site.objects.create(
+        domain="0.0.0.0:8000", name="Local Network"
+    )
     other_site = Site.objects.create(domain="other.example.com", name="Other")
 
     call_command("ensure_default_sites")
@@ -132,7 +136,9 @@ def test_ensure_default_sites_is_idempotent_when_localhost_site_already_exists()
 
     assert default_site.domain == "localhost"
     assert default_site.name == "localhost"
-    assert list(Site.objects.filter(domain="localhost").values_list("id", flat=True)) == [1]
+    assert list(
+        Site.objects.filter(domain="localhost").values_list("id", flat=True)
+    ) == [1]
     assert not Site.objects.filter(pk=existing_localhost_site.pk).exists()
     assert SiteAttributes.objects.filter(
         site=default_site,
@@ -146,10 +152,20 @@ def test_ensure_default_sites_is_idempotent_when_localhost_site_already_exists()
 
 
 def test_ensure_default_sites_adds_runtime_domains():
-    call_command("ensure_default_sites", "--domain", "app.example.com", "--domain", "api.example.com")
+    call_command(
+        "ensure_default_sites",
+        "--domain",
+        "app.example.com",
+        "--domain",
+        "api.example.com",
+    )
 
-    assert Site.objects.filter(domain="app.example.com", name="app.example.com").exists()
-    assert Site.objects.filter(domain="api.example.com", name="api.example.com").exists()
+    assert Site.objects.filter(
+        domain="app.example.com", name="app.example.com"
+    ).exists()
+    assert Site.objects.filter(
+        domain="api.example.com", name="api.example.com"
+    ).exists()
     assert SiteAttributes.objects.filter(site__domain="app.example.com").exists()
     assert SiteAttributes.objects.filter(site__domain="api.example.com").exists()
 
@@ -160,9 +176,17 @@ def test_ensure_default_sites_reads_allowed_hosts_from_environment(monkeypatch):
 
     call_command("ensure_default_sites", "--from-allowed-hosts")
 
-    assert Site.objects.filter(domain="app.example.com", name="app.example.com").exists()
-    assert Site.objects.filter(domain="api.example.com", name="api.example.com").exists()
-    assert not Site.objects.filter(domain="localhost", name="localhost").exclude(pk=1).exists()
+    assert Site.objects.filter(
+        domain="app.example.com", name="app.example.com"
+    ).exists()
+    assert Site.objects.filter(
+        domain="api.example.com", name="api.example.com"
+    ).exists()
+    assert (
+        not Site.objects.filter(domain="localhost", name="localhost")
+        .exclude(pk=1)
+        .exists()
+    )
 
 
 def test_sync_deployment_site_creates_site_and_attributes():
@@ -211,6 +235,30 @@ def test_sync_deployment_site_updates_existing_attributes():
     assert attributes.s3_custom_domain == "new.cloudfront.net"
     assert attributes.s3_frontend_folder == "sites/new-folder"
     assert attributes.from_email == "team@deploy-abc.openbase.app"
+
+
+def test_sync_deployment_site_provisions_configured_oauth_for_its_domain(monkeypatch):
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_CREDENTIALS_JSON",
+        '{"web": {"client_id": "client-id", "client_secret": "client-secret"}}',
+    )
+
+    call_command("sync_deployment_site", "--domain", "deploy-abc.openbase.app")
+
+    site = Site.objects.get(domain="deploy-abc.openbase.app")
+    social_app = SocialApp.objects.get(provider="google")
+    # The provider must attach to THIS deployment's site, not the default
+    # localhost site, so allauth can resolve it by request host in production.
+    assert list(social_app.sites.values_list("id", flat=True)) == [site.id]
+
+
+def test_sync_deployment_site_skips_oauth_without_credentials(monkeypatch):
+    for env_prefix in ("GOOGLE", "GITHUB", "APPLE"):
+        monkeypatch.delenv(f"{env_prefix}_OAUTH_CREDENTIALS_JSON", raising=False)
+
+    call_command("sync_deployment_site", "--domain", "deploy-abc.openbase.app")
+
+    assert not SocialApp.objects.exists()
 
 
 class _AdminTestUser:
