@@ -63,6 +63,23 @@ def stripe_error_is_missing_customer(error: stripe.error.StripeError) -> bool:
     return "no such customer" in error_message and "cus_" in error_message
 
 
+def with_stripe_customer_retry(user, account, operation):
+    """Run a Stripe ``operation``, recovering from a missing Stripe customer.
+
+    ``operation`` is a zero-arg callable performing the Stripe request against
+    ``account``. On a missing-customer ``StripeError`` the customer is created
+    once and the operation retried; any other error (or a second failure)
+    propagates to the caller, which handles logging and the error response.
+    """
+    try:
+        return operation()
+    except stripe.error.StripeError as e:
+        if not stripe_error_is_missing_customer(e):
+            raise
+        user.create_stripe_customer(account)
+        return operation()
+
+
 class AddValueView(generics.CreateAPIView):
     serializer_class = serializers.AddValueSerializer
     permission_classes = [IsAuthenticated]
@@ -382,19 +399,14 @@ class StripeCustomerPortalView(APIView):
         return_url = serializer.validated_data.get("return_url", default_return_url)
 
         try:
-            try:
-                session = stripe.billing_portal.Session.create(
+            session = with_stripe_customer_retry(
+                request.user,
+                account,
+                lambda: stripe.billing_portal.Session.create(
                     customer=account.customer_id,
                     return_url=return_url,
-                )
-            except stripe.error.StripeError as e:
-                if not stripe_error_is_missing_customer(e):
-                    raise
-                account = request.user.create_stripe_customer(account)
-                session = stripe.billing_portal.Session.create(
-                    customer=account.customer_id,
-                    return_url=return_url,
-                )
+                ),
+            )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
             logger.exception("Stripe portal session creation failed", error=str(e))
@@ -437,40 +449,23 @@ class StripeCheckoutView(APIView):
         normalized_tier_cents = validate_subscription_tier_cents(monthly_tier_cents)
 
         try:
-            session = create_checkout_session(
-                account=account,
-                normalized_tier_cents=normalized_tier_cents,
-                success_url=success_url,
-                cancel_url=cancel_url,
-            )
-            return Response({"url": session.url})
-        except stripe.error.StripeError as e:
-            if not stripe_error_is_missing_customer(e):
-                logger.exception(
-                    "Stripe checkout session creation failed", error=str(e)
-                )
-                return Response(
-                    {"error": "Failed to create checkout session"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            try:
-                account = request.user.create_stripe_customer(account)
-                session = create_checkout_session(
+            session = with_stripe_customer_retry(
+                request.user,
+                account,
+                lambda: create_checkout_session(
                     account=account,
                     normalized_tier_cents=normalized_tier_cents,
                     success_url=success_url,
                     cancel_url=cancel_url,
-                )
-                return Response({"url": session.url})
-            except stripe.error.StripeError as retry_error:
-                logger.exception(
-                    "Stripe checkout session creation failed",
-                    error=str(retry_error),
-                )
-                return Response(
-                    {"error": "Failed to create checkout session"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                ),
+            )
+            return Response({"url": session.url})
+        except stripe.error.StripeError as e:
+            logger.exception("Stripe checkout session creation failed", error=str(e))
+            return Response(
+                {"error": "Failed to create checkout session"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 def create_checkout_session(*, account, normalized_tier_cents, success_url, cancel_url):

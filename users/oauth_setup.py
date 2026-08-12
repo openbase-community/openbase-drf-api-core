@@ -30,7 +30,7 @@ class SocialAppCredentials(NamedTuple):
     client_id: str
     client_secret: str
     key: str = ""
-    settings: dict = {}
+    settings: dict | None = None
 
 
 def parse_client_credentials(raw, *, provider_label):
