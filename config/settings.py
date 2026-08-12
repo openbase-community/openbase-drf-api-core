@@ -449,12 +449,18 @@ HEADLESS_JWT_ISSUER = os.environ.get("HEADLESS_JWT_ISSUER", "api-core")
 HEADLESS_JWT_AUDIENCE = os.environ.get("HEADLESS_JWT_AUDIENCE", "openbase-coder-cli")
 HEADLESS_JWT_ACCESS_TOKEN_EXPIRES_IN = 300  # 5 minutes
 HEADLESS_JWT_REFRESH_TOKEN_EXPIRES_IN = 86400 * 7  # 7 days
+# These paths are the backend half of a cross-repo contract. allauth builds
+# emailed verification / password-reset links and OAuth-error redirects to them,
+# so each must match a route the SPA actually declares. The canonical source of
+# truth for the frontend `/account/*` paths is ACCOUNT_PATHS in the auth-client
+# package (allauth-client-react `src/auth/paths.js`), mirrored here with `{key}`
+# placeholders. Rename on both sides together, or these links break silently.
 HEADLESS_FRONTEND_URLS = {
-    "account_confirm_email": "/account/verify-email/{key}",
-    "account_reset_password": "/account/password/reset",
-    "account_reset_password_from_key": "/account/password/reset/key/{key}",
-    "account_signup": "/account/signup",
-    "socialaccount_login_error": "/account/provider/callback",
+    "account_confirm_email": "/account/verify-email/{key}",  # ACCOUNT_PATHS.VERIFY_EMAIL_KEY
+    "account_reset_password": "/account/password/reset",  # ACCOUNT_PATHS.PASSWORD_RESET
+    "account_reset_password_from_key": "/account/password/reset/key/{key}",  # ACCOUNT_PATHS.PASSWORD_RESET_KEY
+    "account_signup": "/account/signup",  # ACCOUNT_PATHS.SIGNUP
+    "socialaccount_login_error": "/account/provider/callback",  # ACCOUNT_PATHS.PROVIDER_CALLBACK
 }
 
 # Optional but recommended for email-only setup
