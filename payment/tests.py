@@ -769,3 +769,164 @@ def test_is_trialing_reads_stripe_status():
     assert trialing.is_trialing
     assert not active.is_trialing
     assert not manual.is_trialing
+
+
+def _user_with_subscription(*, expiration_delta, platform_data):
+    User = get_user_model()
+    user = User.objects.create_user(email="ada@example.com")
+    account = Account.objects.get(user_owner=user)
+    account.customer_id = "cus_live_mode"
+    account.save(update_fields=["customer_id"])
+    subscription = Subscription.objects.create(
+        account=account,
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + expiration_delta,
+        platform_data=platform_data,
+    )
+    return user, account, subscription
+
+
+def _webhook_request():
+    return APIRequestFactory().post(
+        "/api/stripe-webhook/",
+        b"{}",
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE="sig_test",
+    )
+
+
+def test_checkout_rejected_while_subscription_is_active():
+    user, _account, _subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=30),
+        platform_data={"id": "sub_current"},
+    )
+    request = APIRequestFactory().post(
+        "/api/create-checkout-session/",
+        {},
+        format="json",
+        HTTP_HOST="app.example.com",
+        secure=True,
+    )
+    force_authenticate(request, user=user)
+
+    with patch("payment.views.stripe.checkout.Session.create") as session_create:
+        response = StripeCheckoutView.as_view()(request)
+
+    assert response.status_code == 400
+    assert "billing portal" in response.data["error"]
+    session_create.assert_not_called()
+
+
+@override_settings(
+    ALLOWED_HOSTS=["app.example.com"],
+    OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
+    SUBSCRIPTION_TIERS=TEST_SUBSCRIPTION_TIERS,
+    DEFAULT_SUBSCRIPTION_TIER_CENTS=2000,
+)
+def test_checkout_allowed_again_after_subscription_expires():
+    user, _account, _subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=-1),
+        platform_data={"id": "sub_old"},
+    )
+    request = APIRequestFactory().post(
+        "/api/create-checkout-session/",
+        {},
+        format="json",
+        HTTP_HOST="app.example.com",
+        secure=True,
+    )
+    force_authenticate(request, user=user)
+
+    with patch(
+        "payment.views.stripe.checkout.Session.create",
+        return_value=SimpleNamespace(url="https://checkout.stripe.test/session"),
+    ) as session_create:
+        response = StripeCheckoutView.as_view()(request)
+
+    assert response.status_code == 200
+    session_create.assert_called_once()
+
+
+def test_webhook_ignores_cancellation_for_untracked_subscription():
+    _user, _account, subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=30),
+        platform_data={"id": "sub_current"},
+    )
+    event = SimpleNamespace(
+        type="customer.subscription.deleted",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_stray",
+                "customer": "cus_live_mode",
+                "items": {"data": [{"price": {"product": "prod_ultra"}}]},
+            }
+        ),
+    )
+
+    with (
+        patch("payment.views.stripe.Webhook.construct_event", return_value=event),
+        patch("payment.views.run_subscription_cancellation_hooks") as hooks,
+    ):
+        response = StripeWebhookView.as_view()(_webhook_request())
+
+    assert response.status_code == 200
+    subscription.refresh_from_db()
+    assert subscription.is_active()
+    assert subscription.platform_data == {"id": "sub_current"}
+    hooks.assert_not_called()
+
+
+def test_webhook_ignores_sync_for_untracked_subscription_while_active():
+    _user, _account, subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=30),
+        platform_data={"id": "sub_current"},
+    )
+    event = SimpleNamespace(
+        type="customer.subscription.updated",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_stray",
+                "customer": "cus_live_mode",
+                "current_period_end": int(
+                    (timezone.now() + timedelta(days=7)).timestamp()
+                ),
+                "items": {"data": [{"price": {"product": "prod_ultra"}}]},
+            }
+        ),
+    )
+
+    with patch("payment.views.stripe.Webhook.construct_event", return_value=event):
+        response = StripeWebhookView.as_view()(_webhook_request())
+
+    assert response.status_code == 200
+    subscription.refresh_from_db()
+    assert subscription.platform_data == {"id": "sub_current"}
+    assert subscription.subscription_type == "prod_pro"
+
+
+def test_webhook_adopts_new_subscription_after_previous_expires():
+    _user, _account, subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=-1),
+        platform_data={"id": "sub_old"},
+    )
+    period_end = int((timezone.now() + timedelta(days=30)).timestamp())
+    event = SimpleNamespace(
+        type="customer.subscription.created",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_new",
+                "customer": "cus_live_mode",
+                "current_period_end": period_end,
+                "items": {"data": [{"price": {"product": "prod_ultra"}}]},
+            }
+        ),
+    )
+
+    with patch("payment.views.stripe.Webhook.construct_event", return_value=event):
+        response = StripeWebhookView.as_view()(_webhook_request())
+
+    assert response.status_code == 200
+    subscription.refresh_from_db()
+    assert subscription.platform_data["id"] == "sub_new"
+    assert subscription.subscription_type == "prod_ultra"
+    assert subscription.expiration_date == datetime.fromtimestamp(period_end, tz=UTC)

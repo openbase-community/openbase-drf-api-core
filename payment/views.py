@@ -431,6 +431,22 @@ class StripeCheckoutView(APIView):
         serializer.is_valid(raise_exception=True)
         account = request.user.get_account()
 
+        # One subscription per account: a second checkout would create a
+        # duplicate Stripe subscription whose webhooks fight over the single
+        # Subscription row and double-bill the customer. Plan changes go
+        # through the billing portal instead.
+        current_subscription = Subscription.objects.filter(account=account).first()
+        if current_subscription and current_subscription.is_active():
+            return Response(
+                {
+                    "error": (
+                        "This account already has an active subscription. "
+                        "Use the billing portal to change plans."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Get the base URL from the current request
         protocol = "https" if request.is_secure() else "http"
         domain = request.get_host()
@@ -602,10 +618,40 @@ class StripeWebhookView(APIView):
                 subscription_object
             )
 
+            # The account's Subscription row is one-to-one, so only events for
+            # the Stripe subscription it already tracks may modify it while it
+            # is live. A stray duplicate subscription (e.g. from a second
+            # checkout) must neither overwrite the row nor, when cancelled,
+            # expire the account out from under the subscription it is paying
+            # for. Ignoring requires both ids: rows without a stored Stripe id
+            # (manual grants, legacy payloads) keep the historical
+            # last-write-wins behavior.
+            stored_subscription = Subscription.objects.filter(account=account).first()
+            stored_stripe_id = (
+                stored_subscription.stripe_subscription_id
+                if stored_subscription
+                else None
+            )
+            event_stripe_id = str(subscription_object.get("id") or "")
+            event_is_for_other_subscription = bool(
+                stored_stripe_id
+                and event_stripe_id
+                and event_stripe_id != stored_stripe_id
+            )
+
             if (
                 event.type == "customer.subscription.deleted"
                 or subscription_is_canceling
             ):
+                if event_is_for_other_subscription:
+                    logger.info(
+                        "Ignoring Stripe cancellation for an untracked subscription",
+                        account_id=account.pk,
+                        event_type=event.type,
+                        event_subscription_id=event_stripe_id,
+                        tracked_subscription_id=stored_stripe_id,
+                    )
+                    return Response(status=status.HTTP_200_OK)
                 cleanup_result = expire_subscription_and_terminate_resources(
                     account,
                     platform_data=subscription_object,
@@ -620,6 +666,15 @@ class StripeWebhookView(APIView):
                 "customer.subscription.created",
                 "customer.subscription.updated",
             }:
+                if event_is_for_other_subscription and stored_subscription.is_active():
+                    logger.info(
+                        "Ignoring Stripe sync for an untracked subscription",
+                        account_id=account.pk,
+                        event_type=event.type,
+                        event_subscription_id=event_stripe_id,
+                        tracked_subscription_id=stored_stripe_id,
+                    )
+                    return Response(status=status.HTTP_200_OK)
                 period_end = stripe_subscription_period_end_timestamp(
                     subscription_object
                 )
