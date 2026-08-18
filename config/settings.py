@@ -254,6 +254,11 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "DEFAULT_GENERATOR_CLASS": "config.spectacular_generators.TitleSettingGenerator",
     "COMPONENT_SPLIT_REQUEST": True,
+    # Pin the prefix instead of letting drf-spectacular strip the auto-detected
+    # longest common path prefix from operation ids. With auto-detection,
+    # adding or removing a single route outside /api/ silently renames every
+    # operation — and with it every function in generated clients (orval).
+    "SCHEMA_PATH_PREFIX": "/",
     # Consuming apps contribute their own ENUM_NAME_OVERRIDES via the
     # api_core.settings entry point; the backbone ships none of its own.
 }
