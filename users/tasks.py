@@ -69,6 +69,7 @@ async def send_apn(user_id, message, data: dict | None = None):
     request_headers = {
         "apns-expiration": "0",
         "apns-priority": "10",
+        "apns-push-type": "alert",
         "apns-topic": bundle_id,
         "authorization": "bearer " + jwt_token,
     }
