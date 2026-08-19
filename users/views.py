@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import generics, status
 from rest_framework import serializers as drf_serializers
@@ -51,16 +52,38 @@ class APNSView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if hasattr(user, "apns_token") and user.apns_token is not None:
-            user.apns_token.token = token
-            user.apns_token.save()
-            return Response(
-                {"message": "Device token updated successfully."},
-                status=status.HTTP_200_OK,
+        with transaction.atomic():
+            had_token = UserAPNSToken.objects.filter(user=user).exists()
+            UserAPNSToken.objects.filter(user=user).exclude(token=token).delete()
+            UserAPNSToken.objects.update_or_create(
+                token=token,
+                defaults={"user": user},
             )
-        UserAPNSToken.objects.create(user=user, token=token)
+
         return Response(
-            {"message": "Device token registered successfully."},
+            {
+                "message": (
+                    "Device token updated successfully."
+                    if had_token
+                    else "Device token registered successfully."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="APNSDeviceTokenDeleteResponse",
+                fields={"message": drf_serializers.CharField()},
+            ),
+        },
+    )
+    def delete(self, request):
+        UserAPNSToken.objects.filter(user=request.user).delete()
+        return Response(
+            {"message": "Device token unregistered successfully."},
             status=status.HTTP_200_OK,
         )
 
