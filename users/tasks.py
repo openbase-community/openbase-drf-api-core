@@ -1,7 +1,3 @@
-import time
-
-import httpx
-import jwt
 import structlog
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -10,6 +6,7 @@ from twilio.rest import Client
 
 from config.email import get_site_from_email
 from config.taskiq_config import broker
+from users.apns import send_apns_request
 from users.models import UserAPNSToken
 
 required_prefix = "From your assistant: "
@@ -48,31 +45,7 @@ async def send_apn(user_id, message, data: dict | None = None):
     if not token_instance:
         return
     token = token_instance.token
-    team_id = settings.NOTIFICATIONS_APPLE_TEAM_ID
     bundle_id = settings.APPLE_BUNDLE_ID
-    auth_key_id = settings.NOTIFICATIONS_APPLE_AUTH_KEY_ID
-    # APNs URL for push notifications (use the appropriate server: development or production)
-    apns_url_template = (
-        "https://api.push.apple.com:443/3/device/{}"
-        if not settings.NOTIFICATIONS_SANDBOX
-        else "https://api.sandbox.push.apple.com:443/3/device/{}"
-    )
-    apns_url = apns_url_template.format(token)
-    # Generate the JWT token for authentication
-    token_headers = {"alg": "ES256", "kid": auth_key_id}
-    token_payload = {"iss": team_id, "iat": time.time()}
-    auth_key = settings.NOTIFICATIONS_APPLE_P8_CONTENTS
-    jwt_token = jwt.encode(
-        payload=token_payload, key=auth_key, algorithm="ES256", headers=token_headers
-    )
-    # Prepare request headers
-    request_headers = {
-        "apns-expiration": "0",
-        "apns-priority": "10",
-        "apns-push-type": "alert",
-        "apns-topic": bundle_id,
-        "authorization": "bearer " + jwt_token,
-    }
     payload = {
         "aps": {
             "alert": message,
@@ -82,9 +55,13 @@ async def send_apn(user_id, message, data: dict | None = None):
     # Add custom data to payload if provided
     if data:
         payload.update(data)
-    # Send the notification
-    async with httpx.AsyncClient(http2=True) as client:
-        response = await client.post(apns_url, json=payload, headers=request_headers)
+    response = await send_apns_request(
+        token=token,
+        payload=payload,
+        push_type="alert",
+        topic=bundle_id,
+        expiration=0,
+    )
     if response.status_code >= 400:
         logger.error(
             "Could not send APN",

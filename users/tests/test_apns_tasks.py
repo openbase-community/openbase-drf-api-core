@@ -41,8 +41,8 @@ def test_send_apn_declares_alert_push_type():
             return SimpleNamespace(status_code=200, content=b"")
 
     with (
-        patch("users.tasks.jwt.encode", return_value="provider-token"),
-        patch("users.tasks.httpx.AsyncClient", return_value=Client()),
+        patch("users.apns.jwt.encode", return_value="provider-token"),
+        patch("users.apns.httpx.AsyncClient", return_value=Client()),
     ):
         async_to_sync(send_apn.original_func)(
             user.pk,
