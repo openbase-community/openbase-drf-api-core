@@ -1,5 +1,6 @@
 import os
 from email.mime.base import MIMEBase
+from email.utils import parseaddr
 
 import resend
 from django.contrib.sites.models import Site
@@ -9,6 +10,28 @@ from django.core.mail.message import EmailAttachment, EmailMessage
 
 from sites.models import SiteAttributes
 from sites.utils import get_current_site_attributes
+
+FILTERED_EMAIL_LOCAL_PARTS = frozenset({"test"})
+FILTERED_EMAIL_DOMAINS = frozenset(
+    {
+        "example.com",
+        "example.net",
+        "example.org",
+    }
+)
+
+
+def is_filtered_email_address(email_address: str) -> bool:
+    _, parsed_address = parseaddr(email_address)
+    local_part, separator, domain = parsed_address.casefold().rpartition("@")
+    if not separator:
+        return False
+    if local_part in FILTERED_EMAIL_LOCAL_PARTS:
+        return True
+    return any(
+        domain == filtered_domain or domain.endswith(f".{filtered_domain}")
+        for filtered_domain in FILTERED_EMAIL_DOMAINS
+    )
 
 
 def format_from_email(display_name: str, from_email: str) -> str:
@@ -51,10 +74,11 @@ class ResendEmailBackend(BaseEmailBackend):
         self.open()
         sent_count = 0
         for email_message in email_messages:
-            if not email_message.recipients():
+            send_params = self._build_send_params(email_message)
+            if not any(send_params.get(field) for field in ("to", "cc", "bcc")):
                 continue
             try:
-                resend.Emails.send(self._build_send_params(email_message))
+                resend.Emails.send(send_params)
             except Exception:
                 if not self.fail_silently:
                     raise
@@ -72,7 +96,7 @@ class ResendEmailBackend(BaseEmailBackend):
 
         params: resend.Emails.SendParams = {
             "from": email_message.from_email,
-            "to": email_message.to,
+            "to": self._filter_recipients(email_message.to),
             "subject": email_message.subject,
         }
         if text_body is not None:
@@ -80,9 +104,9 @@ class ResendEmailBackend(BaseEmailBackend):
         if html_body is not None:
             params["html"] = html_body
         if email_message.cc:
-            params["cc"] = email_message.cc
+            params["cc"] = self._filter_recipients(email_message.cc)
         if email_message.bcc:
-            params["bcc"] = email_message.bcc
+            params["bcc"] = self._filter_recipients(email_message.bcc)
         if email_message.reply_to:
             params["reply_to"] = email_message.reply_to
         if email_message.extra_headers:
@@ -93,6 +117,14 @@ class ResendEmailBackend(BaseEmailBackend):
         if attachments:
             params["attachments"] = attachments
         return params
+
+    @staticmethod
+    def _filter_recipients(recipients: list[str]) -> list[str]:
+        return [
+            recipient
+            for recipient in recipients
+            if not is_filtered_email_address(recipient)
+        ]
 
     @staticmethod
     def _extract_bodies(email_message: EmailMessage) -> tuple[str | None, str | None]:
