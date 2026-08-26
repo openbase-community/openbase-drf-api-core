@@ -3,6 +3,16 @@ import time
 import httpx
 import jwt
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+
+
+def _get_required_apns_setting(name: str) -> str:
+    value = getattr(settings, name, None)
+    if not isinstance(value, str) or not value.strip():
+        raise ImproperlyConfigured(
+            f"{name} must be configured as a non-empty string to send APNS notifications."
+        )
+    return value
 
 
 async def send_apns_request(
@@ -21,11 +31,14 @@ async def send_apns_request(
         if use_sandbox
         else "api.push.apple.com"
     )
+    team_id = _get_required_apns_setting("NOTIFICATIONS_APPLE_TEAM_ID")
+    auth_key_id = _get_required_apns_setting("NOTIFICATIONS_APPLE_AUTH_KEY_ID")
+    p8_contents = _get_required_apns_setting("NOTIFICATIONS_APPLE_P8_CONTENTS")
     provider_token = jwt.encode(
-        payload={"iss": settings.NOTIFICATIONS_APPLE_TEAM_ID, "iat": time.time()},
-        key=settings.NOTIFICATIONS_APPLE_P8_CONTENTS,
+        payload={"iss": team_id, "iat": time.time()},
+        key=p8_contents,
         algorithm="ES256",
-        headers={"alg": "ES256", "kid": settings.NOTIFICATIONS_APPLE_AUTH_KEY_ID},
+        headers={"alg": "ES256", "kid": auth_key_id},
     )
     headers = {
         "apns-expiration": str(expiration),
