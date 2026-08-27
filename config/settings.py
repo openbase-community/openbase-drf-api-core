@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
+from config.sentry import filter_expected_websocket_disconnects
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -410,6 +411,7 @@ if SENTRY_DSN:
         dsn=SENTRY_DSN,
         environment=os.environ.get("SENTRY_ENVIRONMENT") or None,
         include_local_variables=False,
+        before_send=filter_expected_websocket_disconnects,
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )
 
