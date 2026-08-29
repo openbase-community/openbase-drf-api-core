@@ -75,6 +75,44 @@ def test_submit_contact_sends_admin_notification_email(client, contact_site):
     CACHES={
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "contact-notification-from-email-test",
+        }
+    },
+)
+def test_submit_contact_can_use_configured_notification_from_email(
+    client, contact_site, monkeypatch
+):
+    monkeypatch.setenv(
+        "CONTACT_NOTIFICATION_FROM_EMAIL",
+        "Openbase Cloud <team@openbase.cloud>",
+    )
+
+    response = client.post(
+        "/api/contact/",
+        {
+            "name": "Ada Lovelace",
+            "email": "ada@example.com",
+            "message": "I need help with billing.",
+        },
+        HTTP_HOST=contact_site.domain,
+    )
+
+    assert response.status_code == 201
+    assert len(mail.outbox) == 1
+
+    email = mail.outbox[0]
+    assert email.from_email == "Openbase Cloud <team@openbase.cloud>"
+    assert email.reply_to == ["ada@example.com"]
+
+
+@override_settings(
+    ALLOWED_HOSTS=["contact.example.com"],
+    CONTACT_NOTIFICATION_EMAILS=["gabe@openbase.cloud"],
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    SITE_ID=None,
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
             "LOCATION": "contact-throttle-test",
         }
     },
