@@ -21,22 +21,11 @@ COPY . /app
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     uv sync --frozen --no-dev --no-editable && \
     uv pip install --python /app/.venv/bin/python . && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 # Copied after the uv sync layer so a requirements change (a private repo
 # moving to a new SHA) only re-runs the per-repo installs below, not the sync.
@@ -49,194 +38,89 @@ COPY private_github_repos.txt /tmp/private_github_repos.txt
 # layer so they are never silently skipped.
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '1p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '2p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '3p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '4p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '5p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '6p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '7p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '8p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         sed -n '9p' /tmp/private_github_repos.txt | xargs -r uv pip install --python /app/.venv/bin/python; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 RUN --mount=type=secret,id=gh_pat \
     --mount=type=secret,id=openbase_platform_github_token \
-    GH_PAT="$(cat /run/secrets/gh_pat 2>/dev/null || true)" && \
-    OPENBASE_PLATFORM_GITHUB_TOKEN="$(cat /run/secrets/openbase_platform_github_token 2>/dev/null || true)" && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf "https://github.com/openbase-community/"; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
-    fi && \
+    --mount=type=secret,id=openbase_github_tokens_json \
+    python /app/scripts/configure_github_auth.py configure && \
     if [ -s /tmp/private_github_repos.txt ]; then \
         tail -n +10 /tmp/private_github_repos.txt | while IFS= read -r requirement; do \
             if [ -n "${requirement}" ]; then \
@@ -244,12 +128,7 @@ RUN --mount=type=secret,id=gh_pat \
             fi; \
         done; \
     fi && \
-    if [ -n "${OPENBASE_PLATFORM_GITHUB_TOKEN}" ]; then \
-        git config --global --unset url."https://x-access-token:${OPENBASE_PLATFORM_GITHUB_TOKEN}@github.com/openbase-community/".insteadOf; \
-    fi && \
-    if [ -n "${GH_PAT}" ]; then \
-        git config --global --unset url."https://x-access-token:${GH_PAT}@github.com/".insteadOf; \
-    fi
+    python /app/scripts/configure_github_auth.py cleanup
 
 # Creates a non-root user with an explicit UID and adds permission to access the /app folder
 # For more info, please refer to https://aka.ms/vscode-docker-python-configure-containers
