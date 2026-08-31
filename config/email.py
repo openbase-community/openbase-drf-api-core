@@ -12,13 +12,22 @@ from sites.models import SiteAttributes
 from sites.utils import get_current_site_attributes
 
 FILTERED_EMAIL_LOCAL_PARTS = frozenset({"test"})
-FILTERED_EMAIL_DOMAINS = frozenset(
+NON_DELIVERY_EMAIL_DOMAINS = frozenset(
     {
         "example.com",
         "example.net",
         "example.org",
     }
 )
+NON_DELIVERY_EMAIL_DOMAIN_SUFFIXES = (".test", ".invalid")
+
+
+def is_non_delivery_email_domain(domain: str) -> bool:
+    normalized = domain.strip().casefold().rstrip(".")
+    return any(
+        normalized == filtered_domain or normalized.endswith(f".{filtered_domain}")
+        for filtered_domain in NON_DELIVERY_EMAIL_DOMAINS
+    ) or normalized.endswith(NON_DELIVERY_EMAIL_DOMAIN_SUFFIXES)
 
 
 def is_filtered_email_address(email_address: str) -> bool:
@@ -28,10 +37,7 @@ def is_filtered_email_address(email_address: str) -> bool:
         return False
     if local_part in FILTERED_EMAIL_LOCAL_PARTS:
         return True
-    return any(
-        domain == filtered_domain or domain.endswith(f".{filtered_domain}")
-        for filtered_domain in FILTERED_EMAIL_DOMAINS
-    )
+    return is_non_delivery_email_domain(domain)
 
 
 def format_from_email(display_name: str, from_email: str) -> str:
