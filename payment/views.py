@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 import stripe
 import structlog
@@ -39,8 +41,16 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from config.analytics import AnalyticsEvent, notify_analytics_event
 from payment import serializers
+from payment.analytics import (
+    PORTAL_SESSION_CREATED,
+    PORTAL_SESSION_FAILED,
+    PORTAL_SESSION_REQUESTED,
+    stripe_event_to_analytics_event,
+)
 from payment.models import Account, Subscription
+from payment.stripe_subscription_events import apply_stripe_subscription_event
 from payment.subscription_hooks import run_subscription_cancellation_hooks
 from payment.tiers import (
     subscription_tier,
@@ -51,6 +61,43 @@ from payment.tiers import (
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 logger = structlog.get_logger(__name__)
+
+PORTAL_RETURN_ROUTE_LABELS = {
+    "": "home",
+    "settings": "settings",
+}
+
+
+def portal_return_route_label(return_url: str) -> str:
+    """Reduce a return URL to a non-sensitive, bounded product route label."""
+    first_segment = next(
+        (segment for segment in urlsplit(return_url).path.split("/") if segment),
+        "",
+    )
+    return PORTAL_RETURN_ROUTE_LABELS.get(first_segment, "other")
+
+
+def portal_analytics_event(
+    request,
+    *,
+    correlation_id: str,
+    event_name: str,
+    return_url: str,
+    **properties,
+):
+    return AnalyticsEvent(
+        source="internal",
+        event_name=event_name,
+        external_event_id=f"portal:{correlation_id}:{event_name.rsplit('.', 1)[-1]}",
+        occurred_at=timezone.now(),
+        external_user_id=f"id:{request.user.pk}",
+        properties={
+            "correlation_id": correlation_id,
+            "return_route": portal_return_route_label(return_url),
+            **properties,
+        },
+        provenance={"collector": "stripe_customer_portal"},
+    )
 
 
 def stripe_error_is_missing_customer(error: stripe.error.StripeError) -> bool:
@@ -383,13 +430,6 @@ class StripeCustomerPortalView(APIView):
         )
         serializer.is_valid(raise_exception=True)
 
-        account = request.user.get_account()
-        if not account.customer_id:
-            return Response(
-                {"error": "No Stripe customer found"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         # Get the base URL from the current request
         protocol = "https" if request.is_secure() else "http"
         domain = request.get_host()
@@ -397,6 +437,31 @@ class StripeCustomerPortalView(APIView):
 
         # Allow override of return URL but default to the current site
         return_url = serializer.validated_data.get("return_url", default_return_url)
+        correlation_id = str(uuid4())
+        notify_analytics_event(
+            portal_analytics_event(
+                request,
+                correlation_id=correlation_id,
+                event_name=PORTAL_SESSION_REQUESTED,
+                return_url=return_url,
+            )
+        )
+
+        account = request.user.get_account()
+        if not account.customer_id:
+            notify_analytics_event(
+                portal_analytics_event(
+                    request,
+                    correlation_id=correlation_id,
+                    event_name=PORTAL_SESSION_FAILED,
+                    return_url=return_url,
+                    failure_code="missing_customer",
+                )
+            )
+            return Response(
+                {"error": "No Stripe customer found"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             session = with_stripe_customer_retry(
@@ -407,9 +472,28 @@ class StripeCustomerPortalView(APIView):
                     return_url=return_url,
                 ),
             )
+            notify_analytics_event(
+                portal_analytics_event(
+                    request,
+                    correlation_id=correlation_id,
+                    event_name=PORTAL_SESSION_CREATED,
+                    return_url=return_url,
+                    portal_host=urlsplit(session.url).hostname or "",
+                    stripe_session_id=str(getattr(session, "id", "")),
+                )
+            )
             return Response({"url": session.url})
         except stripe.error.StripeError as e:
             logger.exception("Stripe portal session creation failed", error=str(e))
+            notify_analytics_event(
+                portal_analytics_event(
+                    request,
+                    correlation_id=correlation_id,
+                    event_name=PORTAL_SESSION_FAILED,
+                    return_url=return_url,
+                    failure_code=type(e).__name__,
+                )
+            )
             return Response(
                 {"error": "Failed to create portal session"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -516,68 +600,6 @@ def create_checkout_session(*, account, normalized_tier_cents, success_url, canc
     )
 
 
-def expire_subscription_and_terminate_resources(
-    account: Account,
-    *,
-    platform_data,
-) -> dict[str, int]:
-    with transaction.atomic():
-        Account.objects.select_for_update().get(pk=account.pk)
-        Subscription.objects.update_or_create(
-            account=account,
-            defaults={
-                "subscription_type": stripe_subscription_product_id(platform_data),
-                "expiration_date": timezone.now(),
-                "platform_data": platform_data,
-            },
-        )
-    if not account.user_owner:
-        return {}
-    # Hooks run after the expiration commit: provider teardown (cloud API
-    # calls) must never sit inside a DB transaction. If a hook fails, the
-    # error propagates as a 5xx, the payment provider redelivers the webhook,
-    # the expiration upsert is a no-op, and the idempotent hooks retry.
-    return run_subscription_cancellation_hooks(account.user_owner)
-
-
-def stripe_subscription_item(subscription_object):
-    items = subscription_object.get("items", {}).get("data", [{}])
-    # Subscriptions may carry metered add-on items (e.g. pay-as-you-go
-    # overage prices); the licensed flat-fee item is the one that identifies
-    # the plan and billing period.
-    for item in items:
-        recurring = item.get("price", {}).get("recurring") or {}
-        if recurring.get("usage_type") != "metered":
-            return item
-    return items[0] if items else {}
-
-
-def stripe_subscription_product_id(subscription_object) -> str:
-    return str(
-        stripe_subscription_item(subscription_object)
-        .get("price", {})
-        .get("product", "")
-    )
-
-
-def stripe_subscription_period_end_timestamp(subscription_object):
-    return (
-        subscription_object.get("current_period_end")
-        or stripe_subscription_item(subscription_object).get("current_period_end")
-        or subscription_object.get("trial_end")
-    )
-
-
-def stripe_subscription_is_canceling(subscription_object) -> bool:
-    return bool(
-        subscription_object.get("cancel_at")
-        or subscription_object.get("cancel_at_period_end")
-        or subscription_object.get("canceled_at")
-        or subscription_object.get("ended_at")
-        or subscription_object.get("status") == "canceled"
-    )
-
-
 class StripeWebhookView(APIView):
     permission_classes = [AllowAny]
 
@@ -600,6 +622,14 @@ class StripeWebhookView(APIView):
             logger.exception("Invalid Stripe webhook signature", error=str(e))
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
+        if getattr(event, "id", None) and getattr(event, "created", None):
+            # Stripe is the retry queue for verified events. Surfacing delivery
+            # failure as a 5xx avoids acknowledging and permanently losing one.
+            notify_analytics_event(
+                stripe_event_to_analytics_event(event),
+                require_delivery=True,
+            )
+
         # Handle subscription events
         if event.type.startswith("customer.subscription."):
             subscription_object = event.data.object
@@ -614,96 +644,49 @@ class StripeWebhookView(APIView):
                 )
                 return Response(status=status.HTTP_400_BAD_REQUEST)
 
-            subscription_is_canceling = stripe_subscription_is_canceling(
-                subscription_object
+            result = apply_stripe_subscription_event(
+                account=account,
+                event_type=event.type,
+                event_id=str(getattr(event, "id", "") or ""),
+                event_created=(
+                    int(event.created) if getattr(event, "created", None) else None
+                ),
+                subscription_object=subscription_object,
             )
-
-            # The account's Subscription row is one-to-one, so only events for
-            # the Stripe subscription it already tracks may modify it while it
-            # is live. A stray duplicate subscription (e.g. from a second
-            # checkout) must neither overwrite the row nor, when cancelled,
-            # expire the account out from under the subscription it is paying
-            # for. Ignoring requires both ids: rows without a stored Stripe id
-            # (manual grants, legacy payloads) keep the historical
-            # last-write-wins behavior.
-            stored_subscription = Subscription.objects.filter(account=account).first()
-            stored_stripe_id = (
-                stored_subscription.stripe_subscription_id
-                if stored_subscription
-                else None
-            )
-            event_stripe_id = str(subscription_object.get("id") or "")
-            event_is_for_other_subscription = bool(
-                stored_stripe_id
-                and event_stripe_id
-                and event_stripe_id != stored_stripe_id
-            )
-
-            if (
-                event.type == "customer.subscription.deleted"
-                or subscription_is_canceling
-            ):
-                if event_is_for_other_subscription:
-                    logger.info(
-                        "Ignoring Stripe cancellation for an untracked subscription",
-                        account_id=account.pk,
-                        event_type=event.type,
-                        event_subscription_id=event_stripe_id,
-                        tracked_subscription_id=stored_stripe_id,
-                    )
-                    return Response(status=status.HTTP_200_OK)
-                cleanup_result = expire_subscription_and_terminate_resources(
-                    account,
-                    platform_data=subscription_object,
+            if result == "expired":
+                cleanup_result = (
+                    run_subscription_cancellation_hooks(account.user_owner)
+                    if account.user_owner
+                    else {}
                 )
+                Subscription.objects.filter(
+                    account=account,
+                    stripe_event_id=str(getattr(event, "id", "") or ""),
+                    stripe_event_terminal=True,
+                ).update(stripe_terminal_cleanup_completed=True)
                 logger.info(
                     "Marked subscription as expired and queued resource termination",
                     account_id=account.pk,
                     event_type=event.type,
                     cleanup_result=cleanup_result,
                 )
-            elif event.type in {
-                "customer.subscription.created",
-                "customer.subscription.updated",
-            }:
-                if event_is_for_other_subscription and stored_subscription.is_active():
-                    logger.info(
-                        "Ignoring Stripe sync for an untracked subscription",
-                        account_id=account.pk,
-                        event_type=event.type,
-                        event_subscription_id=event_stripe_id,
-                        tracked_subscription_id=stored_stripe_id,
-                    )
-                    return Response(status=status.HTTP_200_OK)
-                period_end = stripe_subscription_period_end_timestamp(
-                    subscription_object
-                )
-                if not period_end:
-                    logger.error(
-                        "Stripe subscription webhook missing period end",
-                        account_id=account.pk,
-                        stripe_subscription_id=subscription_object.get("id"),
-                    )
-                    return Response(status=status.HTTP_400_BAD_REQUEST)
-
-                current_period_end = datetime.fromtimestamp(period_end, tz=UTC)
-                product_id = stripe_subscription_product_id(subscription_object)
-
-                # Lock the account row so concurrent deliveries for the same
-                # customer (Stripe retries, out-of-order events) serialize.
-                with transaction.atomic():
-                    Account.objects.select_for_update().get(pk=account.pk)
-                    _subscription, created = Subscription.objects.update_or_create(
-                        account=account,
-                        defaults={
-                            "subscription_type": product_id,
-                            "expiration_date": current_period_end,
-                            "platform_data": subscription_object,
-                        },
-                    )
+            elif result == "synced":
                 logger.info(
                     "Subscription synced from Stripe webhook",
-                    action="created" if created else "updated",
                     account_id=account.pk,
+                )
+            elif result == "missing_period_end":
+                logger.error(
+                    "Stripe subscription webhook missing period end",
+                    account_id=account.pk,
+                    stripe_subscription_id=subscription_object.get("id"),
+                )
+                return Response(status=status.HTTP_400_BAD_REQUEST)
+            else:
+                logger.info(
+                    "Ignored Stripe subscription webhook",
+                    account_id=account.pk,
+                    event_type=event.type,
+                    reason=result,
                 )
         return Response(status=status.HTTP_200_OK)

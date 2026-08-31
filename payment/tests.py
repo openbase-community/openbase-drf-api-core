@@ -14,13 +14,17 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from payment.models import Account, Subscription
+from payment.stripe_subscription_events import (
+    apply_stripe_subscription_event,
+    stripe_subscription_item,
+    stripe_subscription_product_id,
+)
 from payment.views import (
     AppleWebhookView,
     StripeCheckoutView,
     StripeCustomerPortalView,
     StripeWebhookView,
-    stripe_subscription_item,
-    stripe_subscription_product_id,
+    portal_return_route_label,
 )
 
 pytestmark = pytest.mark.django_db
@@ -49,6 +53,61 @@ TEST_SUBSCRIPTION_TIERS = {
         "price_setting": "OPENBASE_STRIPE_ULTRA_PRICE_ID",
     },
 }
+
+
+def test_portal_return_route_label_never_retains_path_secrets():
+    assert portal_return_route_label("https://app.openbase.cloud/settings/") == "settings"
+    assert (
+        portal_return_route_label(
+            "https://app.openbase.cloud/account/reset/secret-reset-token"
+        )
+        == "other"
+    )
+
+
+def test_older_stripe_event_cannot_resurrect_terminal_subscription():
+    user = get_user_model().objects.create_user(email="ordering@example.com")
+    account = Account.objects.get(user_owner=user)
+    subscription = Subscription.objects.create(
+        account=account,
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + timedelta(days=30),
+        platform_data={"id": "sub_ordering"},
+    )
+    terminal_object = {
+        "id": "sub_ordering",
+        "customer": "cus_ordering",
+        "status": "canceled",
+        "items": {"data": [{"price": {"product": "prod_pro"}}]},
+    }
+    active_object = {
+        **terminal_object,
+        "status": "active",
+        "current_period_end": int((timezone.now() + timedelta(days=30)).timestamp()),
+    }
+
+    terminal_result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.deleted",
+        event_id="evt_new_terminal",
+        event_created=200,
+        subscription_object=terminal_object,
+    )
+    stale_result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_old_active",
+        event_created=100,
+        subscription_object=active_object,
+    )
+
+    subscription.refresh_from_db()
+    assert terminal_result == "expired"
+    assert stale_result == "ignored_stale"
+    assert subscription.expiration_date <= timezone.now()
+    assert subscription.stripe_event_id == "evt_new_terminal"
+    assert subscription.stripe_event_created == 200
+    assert subscription.stripe_event_terminal is True
 
 
 @override_settings(
@@ -288,7 +347,52 @@ def test_subscription_deleted_webhook_expires_subscription_and_terminates_resour
     terminate_resources.assert_called_once_with(user)
 
 
-def test_subscription_updated_webhook_expires_canceled_trial_and_terminates_resources():
+def test_subscription_terminal_status_expires_and_terminates_resources():
+    User = get_user_model()
+    user = User.objects.create_user(email="terminal-status@example.com")
+    account = Account.objects.get(user_owner=user)
+    account.customer_id = "cus_terminal"
+    account.save(update_fields=["customer_id"])
+    subscription = Subscription.objects.create(
+        account=account,
+        subscription_type="prod_pro",
+        expiration_date=timezone.now() + timedelta(days=30),
+        platform_data={},
+    )
+    event = SimpleNamespace(
+        type="customer.subscription.updated",
+        data=SimpleNamespace(
+            object={
+                "id": "sub_terminal",
+                "customer": "cus_terminal",
+                "status": "canceled",
+                "items": {"data": [{"price": {"product": "prod_pro"}}]},
+            }
+        ),
+    )
+    request = APIRequestFactory().post(
+        "/api/stripe-webhook/",
+        b"{}",
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE="sig_test",
+    )
+
+    with (
+        patch("payment.views.stripe.Webhook.construct_event", return_value=event),
+        patch(
+            "payment.views.run_subscription_cancellation_hooks",
+            return_value={"devspaces_terminated": 1},
+        ) as terminate_resources,
+    ):
+        response = StripeWebhookView.as_view()(request)
+
+    assert response.status_code == 200
+    subscription.refresh_from_db()
+    assert subscription.expiration_date <= timezone.now()
+    terminate_resources.assert_called_once_with(user)
+
+
+def test_subscription_updated_webhook_keeps_scheduled_trial_active():
     User = get_user_model()
     user = User.objects.create_user(email="ada@example.com")
     account = Account.objects.get(user_owner=user)
@@ -337,12 +441,12 @@ def test_subscription_updated_webhook_expires_canceled_trial_and_terminates_reso
 
     assert response.status_code == 200
     subscription.refresh_from_db()
-    assert subscription.expiration_date <= timezone.now()
+    assert subscription.expiration_date == datetime.fromtimestamp(cancel_at, tz=UTC)
     assert subscription.platform_data["cancel_at"] == cancel_at
-    terminate_resources.assert_called_once_with(user)
+    terminate_resources.assert_not_called()
 
 
-def test_subscription_updated_webhook_expires_future_cancel_at_without_canceled_at():
+def test_subscription_updated_webhook_keeps_future_cancel_at_active():
     User = get_user_model()
     user = User.objects.create_user(email="grace@example.com")
     account = Account.objects.get(user_owner=user)
@@ -390,12 +494,12 @@ def test_subscription_updated_webhook_expires_future_cancel_at_without_canceled_
 
     assert response.status_code == 200
     subscription.refresh_from_db()
-    assert subscription.expiration_date <= timezone.now()
+    assert subscription.expiration_date == datetime.fromtimestamp(cancel_at, tz=UTC)
     assert subscription.platform_data["cancel_at"] == cancel_at
-    terminate_resources.assert_called_once_with(user)
+    terminate_resources.assert_not_called()
 
 
-def test_subscription_updated_webhook_expires_cancel_at_period_end():
+def test_subscription_updated_webhook_keeps_cancel_at_period_end_active():
     User = get_user_model()
     user = User.objects.create_user(email="linus@example.com")
     account = Account.objects.get(user_owner=user)
@@ -442,9 +546,9 @@ def test_subscription_updated_webhook_expires_cancel_at_period_end():
 
     assert response.status_code == 200
     subscription.refresh_from_db()
-    assert subscription.expiration_date <= timezone.now()
+    assert subscription.expiration_date == datetime.fromtimestamp(period_end, tz=UTC)
     assert subscription.platform_data["cancel_at_period_end"] is True
-    terminate_resources.assert_called_once_with(user)
+    terminate_resources.assert_not_called()
 
 
 def test_subscription_created_webhook_syncs_item_period_end_for_trials():
