@@ -71,81 +71,59 @@ Do not commit generated tfvars, local deployment metadata, or secret values.
 
 ## Field-test accounts
 
-**Field tests** are agent-driven, end-to-end tests that install the product
-clean-room in a VM and exercise production Openbase Cloud. Core product field
-tests use a reserved throwaway user, never a personal address, personal inbox,
-or plus-address. The `field_test_account` management command provisions that
-user directly as verified without invoking signup or sending email.
+**Field tests** are agent-driven, end-to-end tests that install the product clean-room in a VM and exercise production Openbase Cloud. A field test creates its throwaway user through the real product signup flow, receives the real allauth verification message through Resend's official testing-recipient mechanism, and completes normal email verification. It never uses a personal address or inbox.
 
 ### Guardrail: environment allowlist
 
-Every action requires normalized exact membership in the comma-separated
-`FIELD_TEST_ALLOWED_EMAILS` environment variable. Empty or unset denies all.
-Allowlisting alone is insufficient: the address must also use an
-`openbase-field-<slug>` local-part on `example.com`, `example.net`,
-`example.org`, or a `.test`/`.invalid` domain. Personal-provider domains,
-ordinary deliverable domains, and plus-addressing are categorically rejected
-even if allowlisted.
+Every lifecycle action requires normalized exact membership in the comma-separated `FIELD_TEST_ALLOWED_EMAILS` environment variable. Empty or unset denies all. Allowlisting alone is insufficient: the address must match `delivered+openbase-field-<slug>@resend.dev`, using an opaque run-specific slug. The `+` form is permitted only for this exact Resend testing-recipient contract; personal-provider addresses and every other plus-address are rejected even if allowlisted.
 
 ```bash
-export FIELD_TEST_ALLOWED_EMAILS="openbase-field-20260831@example.com"
+export FIELD_TEST_ALLOWED_EMAILS="delivered+openbase-field-20260901-a7f3@resend.dev"
 ```
 
-### Provisioning and credential lifecycle
+### Real signup and verification
 
-`--provision` reads the password only from `FIELD_TEST_ACCOUNT_PASSWORD` in the
-task environment. There is no password argument, and the JSON result never
-contains the password. Configure it as a temporary, write-only app secret using
-a secret-input path that does not place its value in shell history or process
-arguments (for example, the Openbase Cloud dashboard). Remove the secret after
-the run account has been destroyed. Do not put it in tracked files.
+The field-test agent generates a strong ephemeral password locally, drives the normal signup UI with the exact allowlisted Resend testing recipient, waits for production to render and submit the verification message, and retrieves that exact message through a pre-authorized Resend CLI field-test profile. The Resend credential remains in secure CLI storage: never pass an API key through `--api-key`, command arguments, reports, or logs.
 
-With both variables present in the deployed app environment:
+Use message metadata to select only the exact recipient created after the run began, then retrieve that message by its id:
 
 ```bash
-python manage.py field_test_account --provision openbase-field-20260831@example.com
-# -> {"action":"provision","email":"openbase-field-20260831@example.com",
-#     "user_id":123,"created":true,"verified":true,
-#     "is_staff":false,"is_superuser":false}
+resend emails list --profile <field-test-profile> --limit 100 --json
+resend emails get --profile <field-test-profile> <message-id> --json
+```
 
-python manage.py field_test_account --mock-payment openbase-field-20260831@example.com
-python manage.py field_test_account --destroy openbase-field-20260831@example.com
+The agent follows the confirmation URL from the returned HTML/text through the tested app/browser surface so allauth performs the real verification transition. Verification URLs are bearer credentials: never copy one into an RMOT, report, Slack message, shell history, or test log. If the scoped Resend profile is unavailable or no exact post-start message arrives, the field test is blocked; never fall back to a human inbox or mark the address verified out of band.
+
+### Lifecycle command
+
+`field_test_account` deliberately cannot create or verify a user. It only performs guarded cleanup and optional local paid entitlement around the real signup flow:
+
+```bash
+python manage.py field_test_account --destroy delivered+openbase-field-20260901-a7f3@resend.dev
+python manage.py field_test_account --mock-payment delivered+openbase-field-20260901-a7f3@resend.dev
 ```
 
 Typical field-test flow:
 
-1. `field_test_account --provision EMAIL` creates or refreshes the verified,
-   active, nonstaff account and rotates its password from the environment.
-2. `field_test_account --mock-payment EMAIL` grants local paid entitlement when
-   the test needs paid features.
-3. Run the core product test, then `field_test_account --destroy EMAIL` and
-   remove the temporary password secret.
+1. Confirm the exact Resend testing recipient is allowlisted, record the run start time, and run `field_test_account --destroy EMAIL` to clear a prior account if the address is being reused.
+2. Drive real signup, retrieve the exact post-start Resend message, and complete real allauth verification through the product.
+3. Run `field_test_account --mock-payment EMAIL` only after verification when paid features are in scope.
+4. Run the product test, then always finish with `field_test_account --destroy EMAIL`.
 
-Run it locally with `uv run python manage.py field_test_account …`, and against
-a deployed Openbase Cloud app with `openbase run`:
+Run the lifecycle command locally with `uv run python manage.py field_test_account …`, and against a deployed Openbase Cloud app with `openbase run`:
 
 ```bash
 openbase run -a <app> python manage.py field_test_account \
-  --provision openbase-field-20260831@example.com
+  --destroy delivered+openbase-field-20260901-a7f3@resend.dev
 ```
 
 ### Safety contract
 
-- Exact allowlist and reserved-identity guards run before account reads/writes
-  and again against fetched users. Provisioning refuses staff/superuser and
-  allauth email-ownership collisions.
-- Provisioning creates the verified `EmailAddress`, auth token, and local
-  account records directly. It does not invoke signup, email, Resend, Stripe, or
-  other network paths. The Resend backend independently filters every reserved
-  domain accepted by this command before provider invocation.
-- Destruction reuses the canonical account-deletion path (`user.delete()`, the
-  same cascade as `users.views.DeleteUserView`), so owned data is cleaned
-  exactly like a real account deletion.
-- `--mock-payment` only ever writes a local `payment.Subscription` row; it makes
-  no payment-provider calls and is exclusively for field-test accounts.
-- Email-delivery or onboarding-email tests are a separate, explicitly
-  authorized test class with their own isolated recipient infrastructure. They
-  never reuse a core field-test account or any personal inbox.
+- Exact allowlist and Resend-recipient guards run before account reads/writes and again against fetched users. Staff and superuser accounts are always refused.
+- User creation, password validation, mandatory verification, email template rendering, Resend submission, and allauth confirmation all run through their normal production paths.
+- Destruction reuses the canonical account-deletion path (`user.delete()`, the same cascade as `users.views.DeleteUserView`), so owned data is cleaned exactly like a real account deletion.
+- `--mock-payment` requires an already verified email and only writes a local `payment.Subscription` row; it makes no payment-provider call.
+- A dedicated delivery canary may separately test receipt by a real mailbox provider. Core field tests use Resend's testing recipient and never a personal inbox.
 
 The consolidated field-testing skill and testing-tiers spec live in the
 `openbase-coder-workspace` repo.
