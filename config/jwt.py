@@ -14,6 +14,24 @@ SUPERSEDES_SESSION_KEY = "headless_refresh_supersedes"
 
 
 class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
+    def create_session_token(self, request) -> str:
+        """Expose auth-flow sessions before mandatory email verification.
+
+        django-allauth 65.13's JWT strategy asserts that ``request.user`` is
+        authenticated before returning the session token. A mandatory email
+        verification signup is intentionally unauthenticated at this point,
+        but the app client still needs the session token to continue the
+        verification flow. Newer allauth releases removed that assertion; keep
+        the compatible behavior here while deployments remain on 65.13.
+        """
+        if not request.session.session_key:
+            request.session.save()
+        key = request.session.session_key
+        if not isinstance(key, str):
+            msg = "Django did not create a session key."
+            raise TypeError(msg)
+        return key
+
     def create_access_token_payload(self, request) -> dict | None:
         payload = super().create_access_token_payload(request)
         if payload is not None:
