@@ -79,7 +79,7 @@ Every lifecycle action requires an address matching `delivered+openbase-field-<s
 
 ### Real signup and verification
 
-The field-test agent generates a strong ephemeral password locally, drives the normal signup UI with a fresh reserved Resend testing recipient, waits for production to render and submit the verification message, and retrieves that exact message through a pre-authorized Resend CLI field-test profile. The Resend credential remains in secure CLI storage: never pass an API key through `--api-key`, command arguments, reports, or logs.
+The field-test agent generates a strong ephemeral password locally, drives the normal signup UI with a fresh reserved Resend testing recipient, waits for the selected Cloud deployment to render and submit the verification message, and retrieves that exact message through an authenticated Resend CLI profile. The active/default profile is acceptable; a separate field-test-specific profile is not required. The Resend credential remains in secure CLI storage: never pass an API key through `--api-key`, command arguments, reports, or logs.
 
 Use message metadata to select only the exact recipient created after the run began, then retrieve that message by its id:
 
