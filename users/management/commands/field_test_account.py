@@ -5,7 +5,7 @@ recipient, retrieve the rendered verification message, and complete normal
 allauth verification. This command deliberately cannot create or verify users.
 It only performs guarded teardown and optional local paid entitlement.
 
-Every operation requires exact membership in ``FIELD_TEST_ALLOWED_EMAILS``.
+Every operation requires the reserved Openbase Resend testing-recipient format.
 """
 
 import json
@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from payment.models import Account, Subscription
 from users.field_test_accounts import (
-    assert_allowed_field_test_email,
+    assert_reserved_field_test_email,
     normalize_email,
 )
 
@@ -30,8 +30,8 @@ class Command(BaseCommand):
     help = (
         "Destroy or grant local paid entitlement to a field-test account created "
         "through the real signup and email-verification flow. All actions require "
-        "exact FIELD_TEST_ALLOWED_EMAILS membership and the official Resend "
-        "field-test recipient format. This command cannot create or verify users."
+        "the reserved Openbase Resend field-test recipient format. This command "
+        "cannot create or verify users."
     )
 
     def add_arguments(self, parser):
@@ -54,7 +54,7 @@ class Command(BaseCommand):
             action, email = "mock-payment", options["mock_payment"]
 
         email = normalize_email(email)
-        assert_allowed_field_test_email(email)
+        assert_reserved_field_test_email(email)
 
         if action == "destroy":
             result = self._destroy(email)
@@ -75,7 +75,7 @@ class Command(BaseCommand):
                 "reason": "not_found",
             }
 
-        assert_allowed_field_test_email(user.email)
+        assert_reserved_field_test_email(user.email)
         if user.is_staff or user.is_superuser:
             msg = "Refusing to destroy a staff or superuser account. No changes were made."
             raise CommandError(msg)
@@ -95,7 +95,7 @@ class Command(BaseCommand):
             msg = f"No user with email {email}: complete field-test signup first."
             raise CommandError(msg)
 
-        assert_allowed_field_test_email(user.email)
+        assert_reserved_field_test_email(user.email)
         if user.is_staff or user.is_superuser:
             msg = "Refusing to grant entitlement to a staff or superuser account."
             raise CommandError(msg)

@@ -73,17 +73,13 @@ Do not commit generated tfvars, local deployment metadata, or secret values.
 
 **Field tests** are agent-driven, end-to-end tests that install the product clean-room in a VM and exercise production Openbase Cloud. A field test creates its throwaway user through the real product signup flow, receives the real allauth verification message through Resend's official testing-recipient mechanism, and completes normal email verification. It never uses a personal address or inbox.
 
-### Guardrail: environment allowlist
+### Guardrail: reserved testing namespace
 
-Every lifecycle action requires normalized exact membership in the comma-separated `FIELD_TEST_ALLOWED_EMAILS` environment variable. Empty or unset denies all. Allowlisting alone is insufficient: the address must match `delivered+openbase-field-<slug>@resend.dev`, using an opaque run-specific slug. The `+` form is permitted only for this exact Resend testing-recipient contract; personal-provider addresses and every other plus-address are rejected even if allowlisted.
-
-```bash
-export FIELD_TEST_ALLOWED_EMAILS="delivered+openbase-field-20260901-a7f3@resend.dev"
-```
+Every lifecycle action requires an address matching `delivered+openbase-field-<slug>@resend.dev`, using an opaque run-specific slug. Each field test may generate a fresh address without changing deployment configuration. The `+` form is permitted only for this exact Resend testing-recipient contract; personal-provider addresses and every other plus-address are rejected.
 
 ### Real signup and verification
 
-The field-test agent generates a strong ephemeral password locally, drives the normal signup UI with the exact allowlisted Resend testing recipient, waits for production to render and submit the verification message, and retrieves that exact message through a pre-authorized Resend CLI field-test profile. The Resend credential remains in secure CLI storage: never pass an API key through `--api-key`, command arguments, reports, or logs.
+The field-test agent generates a strong ephemeral password locally, drives the normal signup UI with a fresh reserved Resend testing recipient, waits for production to render and submit the verification message, and retrieves that exact message through a pre-authorized Resend CLI field-test profile. The Resend credential remains in secure CLI storage: never pass an API key through `--api-key`, command arguments, reports, or logs.
 
 Use message metadata to select only the exact recipient created after the run began, then retrieve that message by its id:
 
