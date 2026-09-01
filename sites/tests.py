@@ -189,7 +189,9 @@ def test_ensure_default_sites_reads_allowed_hosts_from_environment(monkeypatch):
     )
 
 
-def test_sync_deployment_site_creates_site_and_attributes():
+def test_sync_deployment_site_creates_site_and_attributes(monkeypatch):
+    monkeypatch.delenv("DEFAULT_FROM_EMAIL", raising=False)
+
     call_command(
         "sync_deployment_site",
         "--domain",
@@ -209,7 +211,29 @@ def test_sync_deployment_site_creates_site_and_attributes():
     assert attributes.from_email == "team@deploy-abc.openbase.app"
 
 
-def test_sync_deployment_site_updates_existing_attributes():
+def test_sync_deployment_site_prefers_default_from_email(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
+
+    call_command(
+        "sync_deployment_site",
+        "--domain",
+        "app.openbase.cloud",
+        "--s3-custom-domain",
+        "d111111abcdef8.cloudfront.net",
+        "--s3-frontend-folder",
+        "sites/app",
+    )
+
+    site = Site.objects.get(domain="app.openbase.cloud")
+    attributes = SiteAttributes.objects.get(site=site)
+
+    # The verified DEFAULT_FROM_EMAIL wins over the unverified team@<domain>.
+    assert attributes.from_email == "team@openbase.cloud"
+
+
+def test_sync_deployment_site_updates_existing_attributes(monkeypatch):
+    monkeypatch.delenv("DEFAULT_FROM_EMAIL", raising=False)
+
     site = Site.objects.create(domain="deploy-abc.openbase.app", name="Old Name")
     SiteAttributes.objects.create(
         site=site,
