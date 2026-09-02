@@ -329,6 +329,11 @@ NOTIFICATIONS_APPLE_P8_CONTENTS = os.environ.get(
     "NOTIFICATIONS_APPLE_P8_CONTENTS", ""
 ).replace("\\n", "\n")
 NOTIFICATIONS_SANDBOX = os.environ.get("NOTIFICATIONS_SANDBOX", "0") == "1"
+# Firebase service-account JSON (the full file contents, inline) used to mint
+# FCM HTTP v1 OAuth tokens for Android push notifications.
+NOTIFICATIONS_FCM_SERVICE_ACCOUNT_JSON = os.environ.get(
+    "NOTIFICATIONS_FCM_SERVICE_ACCOUNT_JSON", ""
+)
 
 if not DEBUG:
     CSRF_TRUSTED_ORIGINS = [f"https://{domain}" for domain in ALLOWED_HOSTS]
@@ -410,9 +415,7 @@ SENTRY_DSN = os.environ.get("SENTRY_DSN")
 
 def is_expected_client_disconnect_event(event):
     exception_values = (event.get("exception") or {}).get("values") or []
-    if not any(
-        value.get("type") == "CancelledError" for value in exception_values
-    ):
+    if not any(value.get("type") == "CancelledError" for value in exception_values):
         return False
 
     request = event.get("request") or {}
@@ -420,9 +423,7 @@ def is_expected_client_disconnect_event(event):
     request_path = urlparse(request_url).path if isinstance(request_url, str) else ""
     transaction = event.get("transaction")
     paths = {
-        path
-        for path in (request_path, transaction)
-        if isinstance(path, str) and path
+        path for path in (request_path, transaction) if isinstance(path, str) and path
     }
     return "/api/csrf/" in paths
 
