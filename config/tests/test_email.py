@@ -1,6 +1,12 @@
+from types import SimpleNamespace
+
 from django.core.mail import EmailMessage
 
-from config.email import ResendEmailBackend, is_filtered_email_address
+from config.email import (
+    ResendEmailBackend,
+    get_effective_site_from_email,
+    is_filtered_email_address,
+)
 
 
 def test_filter_recognizes_dummy_recipients_case_insensitively():
@@ -78,6 +84,24 @@ def test_backend_submits_official_resend_field_test_recipient(monkeypatch, mocke
 
     assert sent_count == 1
     assert send.call_args.args[0]["to"] == [recipient]
+
+
+def test_site_from_email_prefers_default_for_generated_sender(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
+    site = SimpleNamespace(domain="app-staging.openbase.cloud", name="Staging")
+    site_attributes = SimpleNamespace(
+        from_email="team@app-staging.openbase.cloud",
+    )
+
+    assert get_effective_site_from_email(site, site_attributes) == "team@openbase.cloud"
+
+
+def test_site_from_email_keeps_custom_sender(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
+    site = SimpleNamespace(domain="tenant.example.com", name="Tenant")
+    site_attributes = SimpleNamespace(from_email="support@example.com")
+
+    assert get_effective_site_from_email(site, site_attributes) == "support@example.com"
 
 
 def test_backend_removes_filtered_addresses_from_every_recipient_field(
