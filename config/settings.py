@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
+from config.sentry import filter_expected_websocket_disconnects
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -405,11 +406,39 @@ ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"] if not DEBUG else ""
 # contain short-lived credentials (for example, workspace provisioning bundles).
 # send_default_pii stays at the SDK default (False).
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
+
+
+def is_expected_client_disconnect_event(event):
+    exception_values = (event.get("exception") or {}).get("values") or []
+    if not any(
+        value.get("type") == "CancelledError" for value in exception_values
+    ):
+        return False
+
+    request = event.get("request") or {}
+    request_url = request.get("url")
+    request_path = urlparse(request_url).path if isinstance(request_url, str) else ""
+    transaction = event.get("transaction")
+    paths = {
+        path
+        for path in (request_path, transaction)
+        if isinstance(path, str) and path
+    }
+    return "/api/csrf/" in paths
+
+
+def filter_expected_sentry_events(event, hint):
+    if is_expected_client_disconnect_event(event):
+        return None
+    return filter_expected_websocket_disconnects(event, hint)
+
+
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         environment=os.environ.get("SENTRY_ENVIRONMENT") or None,
         include_local_variables=False,
+        before_send=filter_expected_sentry_events,
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )
 
