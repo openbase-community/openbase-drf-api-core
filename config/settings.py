@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
+from config.sentry import filter_expected_websocket_disconnects
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -429,7 +430,7 @@ def is_expected_client_disconnect_event(event):
 def filter_expected_sentry_events(event, hint):
     if is_expected_client_disconnect_event(event):
         return None
-    return event
+    return filter_expected_websocket_disconnects(event, hint)
 
 
 if SENTRY_DSN:
