@@ -5,6 +5,8 @@ from allauth.core.internal import jwkkit
 from allauth.headless import app_settings as headless_app_settings
 from allauth.headless.tokens.strategies.jwt import JWTTokenStrategy, internal
 from django.conf import settings
+from django.contrib.sessions.models import Session
+from django.db import transaction
 from django.http import JsonResponse
 
 from config.jwt_analytics import notify_jwt_issued
@@ -94,42 +96,81 @@ class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
             return access_token, refresh_token
 
         jti = payload["jti"]
-        state = internal.get_refresh_token_state(session)
-        supersedes: dict[str, str] = session.setdefault(SUPERSEDES_SESSION_KEY, {})
+        with transaction.atomic():
+            # Sessions are whole-blob last-write-wins: two concurrent
+            # refreshes both read the same state, and the loser's save erases
+            # the winner's freshly issued child jti, logging that client out
+            # on its next use. Serialize the read-modify-write by locking the
+            # session row and re-reading the freshest state.
+            session = self._locked_rotation_session(session, payload)
+            if session is None:
+                # A concurrent request retired this token after we validated
+                # it; serialized execution would reject it too.
+                return None
 
-        # Using this token acknowledges its issuance: retire its parent and
-        # any sibling tokens whose responses were never received.
-        parent_jti = supersedes.pop(jti, None)
-        if parent_jti is not None:
-            state.pop(parent_jti, None)
-            for sibling, sibling_parent in list(supersedes.items()):
-                if sibling_parent == parent_jti:
-                    supersedes.pop(sibling, None)
-                    state.pop(sibling, None)
+            state = internal.get_refresh_token_state(session)
+            supersedes: dict[str, str] = session.setdefault(SUPERSEDES_SESSION_KEY, {})
 
-        jtis_before = set(state)
-        next_refresh_token = internal.create_refresh_token(user, session)
-        new_jtis = set(state) - jtis_before
-        if len(new_jtis) == 1:
-            supersedes[set(new_jtis).pop()] = jti
+            # Using this token acknowledges its issuance: retire its parent
+            # and any sibling tokens whose responses were never received.
+            parent_jti = supersedes.pop(jti, None)
+            if parent_jti is not None:
+                state.pop(parent_jti, None)
+                for sibling, sibling_parent in list(supersedes.items()):
+                    if sibling_parent == parent_jti:
+                        supersedes.pop(sibling, None)
+                        state.pop(sibling, None)
 
-        # Keep session state bounded.
-        now = time.time()
-        for stale_jti, exp in list(state.items()):
-            if exp <= now:
-                state.pop(stale_jti, None)
-        for issued_jti in list(supersedes):
-            if issued_jti not in state:
-                supersedes.pop(issued_jti, None)
+            jtis_before = set(state)
+            next_refresh_token = internal.create_refresh_token(user, session)
+            new_jtis = set(state) - jtis_before
+            if len(new_jtis) == 1:
+                supersedes[set(new_jtis).pop()] = jti
 
-        session.modified = True
-        session.save()
+            # Keep session state bounded.
+            now = time.time()
+            for stale_jti, exp in list(state.items()):
+                if exp <= now:
+                    state.pop(stale_jti, None)
+            for issued_jti in list(supersedes):
+                if issued_jti not in state:
+                    supersedes.pop(issued_jti, None)
+
+            session.modified = True
+            session.save()
         notify_jwt_issued(
             user=user,
             session=session,
             source="refresh_token",
         )
         return access_token, next_refresh_token
+
+    @staticmethod
+    def _locked_rotation_session(session, payload):
+        """Lock the session row and return the freshest session to mutate.
+
+        Must run inside a transaction. Takes ``SELECT ... FOR UPDATE`` on the
+        DB session row so concurrent rotations for the same session are
+        serialized, then re-loads the session (a competing request may have
+        committed between token validation and lock acquisition). Returns the
+        reloaded session, the original session when there is no DB row to
+        lock (session never persisted, or a non-DB session engine), or
+        ``None`` when the presented token was retired concurrently.
+        """
+        locked_row = (
+            Session.objects.select_for_update()
+            .filter(session_key=session.session_key)
+            .first()
+        )
+        if locked_row is None:
+            return session
+        reloaded_session = internal.get_token_session(payload)
+        if reloaded_session is None:
+            return session
+        exp = internal.get_refresh_token_state(reloaded_session).get(payload["jti"])
+        if exp is None or exp <= time.time():
+            return None
+        return reloaded_session
 
 
 OpenbaseJWTTokenStrategy = ApiCoreJWTTokenStrategy
