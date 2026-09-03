@@ -78,3 +78,57 @@ def test_filter_keeps_non_asyncio_websocket_disconnect_events():
     event["logger"] = "django.request"
 
     assert filter_expected_websocket_disconnects(event, {}) == event
+
+
+def _websocket_keepalive_event():
+    return {
+        "logger": "asyncio",
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "CancelledError",
+                    "value": None,
+                    "mechanism": {"type": "logging", "handled": True},
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "filename": "websockets/legacy/protocol.py",
+                                "module": "websockets.legacy.protocol",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "ConnectionClosedError",
+                    "value": "sent 1011 (internal error) keepalive ping timeout; no close frame received",
+                    "mechanism": {"type": "logging", "handled": True},
+                    "stacktrace": {"frames": []},
+                },
+            ]
+        },
+    }
+
+
+def test_filter_drops_handled_keepalive_timeout_with_cancelled_frame():
+    event = _websocket_keepalive_event()
+
+    assert filter_expected_websocket_disconnects(event, {}) is None
+
+
+def test_filter_keeps_unhandled_websocket_keepalive_timeout():
+    event = _websocket_keepalive_event()
+    event["exception"]["values"][1]["mechanism"]["handled"] = False
+
+    assert filter_expected_websocket_disconnects(event, {}) == event
+
+
+def test_filter_keeps_non_websocket_connection_closed_errors():
+    # A ConnectionClosedError surfacing through application code (not pure
+    # asyncio/websockets teardown) must reach Sentry.
+    event = _websocket_keepalive_event()
+    event["exception"]["values"][0]["stacktrace"]["frames"] = [
+        {"filename": "openbase_api/consumers.py", "module": "openbase_api.consumers"}
+    ]
+
+    assert filter_expected_websocket_disconnects(event, {}) == event
