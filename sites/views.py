@@ -72,6 +72,11 @@ async def serve_index(request, resource):
                     f"Error fetching index.html from S3: {e}",
                     status=e.response.status_code,
                 )
+            except httpx.TimeoutException as e:
+                return HttpResponse(
+                    f"Timed out fetching index.html from S3: {e}",
+                    status=504,
+                )
 
     # Manually ensure a CSRF token is generated and set the CSRF cookie
     get_token(request)

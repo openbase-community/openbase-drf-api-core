@@ -1,5 +1,9 @@
+from types import SimpleNamespace
+
+import httpx
 import pytest
 from allauth.socialaccount.models import SocialApp
+from asgiref.sync import async_to_sync
 from django.contrib.sites.models import Site
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.management import call_command
@@ -9,6 +13,7 @@ from django.urls import path
 from config.admin import site as dynamic_admin_site
 from contact.models import ContactSubmission
 from sites.models import SiteAttributes
+from sites.views import serve_index
 
 urlpatterns = [
     path("admin/", dynamic_admin_site.urls),
@@ -283,6 +288,45 @@ def test_sync_deployment_site_skips_oauth_without_credentials(monkeypatch):
     call_command("sync_deployment_site", "--domain", "deploy-abc.openbase.app")
 
     assert not SocialApp.objects.exists()
+
+
+def test_serve_index_returns_gateway_timeout_when_index_fetch_times_out(
+    rf, monkeypatch
+):
+    async def current_site_attributes(request):
+        return SimpleNamespace(
+            s3_custom_domain="d111111abcdef8.cloudfront.net",
+            s3_frontend_folder="sites/deploy-abc",
+        )
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            request = httpx.Request("GET", url)
+            raise httpx.ReadTimeout("timed out", request=request)
+
+    class Cache:
+        async def aget(self, key):
+            return None
+
+        async def aset(self, key, value, timeout):
+            return None
+
+    monkeypatch.setattr("sites.views.aget_current_site_attributes", current_site_attributes)
+    monkeypatch.setattr("sites.views.cache", Cache())
+    monkeypatch.setattr("sites.views.httpx.AsyncClient", lambda: Client())
+
+    request = rf.get("/", HTTP_ACCEPT="text/html")
+
+    response = async_to_sync(serve_index)(request, "")
+
+    assert response.status_code == 504
+    assert b"Timed out fetching index.html from S3" in response.content
 
 
 class _AdminTestUser:
