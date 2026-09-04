@@ -19,7 +19,11 @@ def get_current_site_attributes(request) -> SiteAttributes | None:
         return _site_attributes_cache[host]
 
     # Get site and its attributes
-    site = get_current_site(request)
+    try:
+        site = get_current_site(request)
+    except Site.DoesNotExist:
+        _site_attributes_cache[host] = None
+        return None
     if not isinstance(
         site, Site
     ):  # Skip caching for RequestSite objects (used in tests)
@@ -45,7 +49,11 @@ async def aget_current_site_attributes(request) -> SiteAttributes | None:
         return _site_attributes_cache[host]
 
     # Get site and its attributes
-    site = await sync_to_async(get_current_site)(request)
+    try:
+        site = await sync_to_async(get_current_site)(request)
+    except Site.DoesNotExist:
+        _site_attributes_cache[host] = None
+        return None
     if not isinstance(
         site, Site
     ):  # Skip caching for RequestSite objects (used in tests)
