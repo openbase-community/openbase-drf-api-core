@@ -51,6 +51,15 @@ TEST_SUBSCRIPTION_TIERS = {
 }
 
 
+def test_subscription_exposes_stripe_event_ordering_fields():
+    subscription = Subscription(platform_data={})
+
+    assert subscription.stripe_event_created is None
+    assert subscription.stripe_event_id == ""
+    assert subscription.stripe_event_terminal is False
+    assert subscription.stripe_terminal_cleanup_completed is False
+
+
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
