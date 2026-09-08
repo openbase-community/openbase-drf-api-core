@@ -1,3 +1,5 @@
+import os
+
 from django.conf import settings
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail import EmailMessage
@@ -29,6 +31,10 @@ class SubmitContactView(generics.CreateAPIView):
             raise ValueError(msg)
 
         site = submission.site
+        from_email = (
+            os.environ.get("CONTACT_NOTIFICATION_FROM_EMAIL", "").strip()
+            or get_request_from_email(self.request)
+        )
         email_message = EmailMessage(
             subject=f"New contact submission for {site.name if site else 'site'}",
             body=render_to_string(
@@ -36,7 +42,7 @@ class SubmitContactView(generics.CreateAPIView):
                 {"submission": submission, "site": site},
             ),
             to=settings.CONTACT_NOTIFICATION_EMAILS,
-            from_email=get_request_from_email(self.request),
+            from_email=from_email,
             reply_to=[submission.email],
         )
         email_message.send()

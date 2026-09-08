@@ -54,25 +54,33 @@ def _set_admin_headers(site):
         admin.site.site_title = f"{site.name} Admin"
 
 
+def _is_admin_path(path: str) -> bool:
+    admin_suffix = f"-{settings.ADMIN_SUFFIX}" if not settings.DEBUG else ""
+    admin_prefix = f"/admin{admin_suffix}/"
+    return path == admin_prefix.removesuffix("/") or path.startswith(admin_prefix)
+
+
 @sync_and_async_middleware
 def admin_name_middleware(get_response):
     if iscoroutinefunction(get_response):
 
         async def async_impl(request):
-            host = request.get_host()
-            if host in SITE_CACHE:
-                site = SITE_CACHE[host]
-            else:
-                site = await sync_to_async(get_current_site)(request)
-            _set_admin_headers(site)
+            if _is_admin_path(request.path):
+                host = request.get_host()
+                if host in SITE_CACHE:
+                    site = SITE_CACHE[host]
+                else:
+                    site = await sync_to_async(get_current_site)(request)
+                _set_admin_headers(site)
             response = await get_response(request)
             return response
 
         return async_impl
 
     def sync_impl(request):
-        site = get_current_site(request)
-        _set_admin_headers(site)
+        if _is_admin_path(request.path):
+            site = get_current_site(request)
+            _set_admin_headers(site)
         response = get_response(request)
         return response
 

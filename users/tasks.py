@@ -18,6 +18,19 @@ logger = structlog.get_logger(__name__)
 User = get_user_model()
 
 
+def _is_email_provider_auth_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status_code in {401, 403, "401", "403"}:
+        return True
+
+    exception_name = type(exc).__name__.casefold()
+    return exception_name in {
+        "invalidapikeyerror",
+        "missingapikeyerror",
+        "unauthorizederror",
+    }
+
+
 @broker.task
 def send_email(subject, message, to_email, site_id=None):
     email_message = EmailMessage(
@@ -27,7 +40,18 @@ def send_email(subject, message, to_email, site_id=None):
         from_email=get_site_from_email(site_id) if site_id is not None else None,
     )
     email_message.content_subtype = "html"
-    email_message.send()
+    try:
+        email_message.send()
+    except Exception as exc:
+        if not _is_email_provider_auth_error(exc):
+            raise
+        logger.error(
+            "Email provider authentication failed; email task will not retry",
+            exception_class=type(exc).__name__,
+            status_code=getattr(exc, "status_code", None) or getattr(exc, "code", None),
+            site_id=site_id,
+            recipients_count=len(email_message.to),
+        )
 
 
 @broker.task

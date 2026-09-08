@@ -1,6 +1,12 @@
+from types import SimpleNamespace
+
 from django.core.mail import EmailMessage
 
-from config.email import ResendEmailBackend, is_filtered_email_address
+from config.email import (
+    ResendEmailBackend,
+    get_effective_site_from_email,
+    is_filtered_email_address,
+)
 
 
 def test_filter_recognizes_dummy_recipients_case_insensitively():
@@ -16,6 +22,9 @@ def test_filter_allows_addresses_outside_hard_coded_rules():
     assert not is_filtered_email_address("testing@real-domain.com")
     assert not is_filtered_email_address("person@example.co")
     assert not is_filtered_email_address("person@real-domain.com")
+    assert not is_filtered_email_address(
+        "delivered+openbase-field-run-a7f3@resend.dev"
+    )
 
 
 def test_backend_does_not_send_messages_with_only_filtered_recipients(
@@ -58,6 +67,41 @@ def test_backend_does_not_call_resend_for_reserved_field_test_domains(
 
     assert sent_count == 0
     send.assert_not_called()
+
+
+def test_backend_submits_official_resend_field_test_recipient(monkeypatch, mocker):
+    monkeypatch.setenv("RESEND_API_KEY", "unused-test-key")
+    send = mocker.patch("config.email.resend.Emails.send")
+    recipient = "delivered+openbase-field-run-a7f3@resend.dev"
+    email_message = EmailMessage(
+        subject="Field-test verification",
+        body="Follow the normal verification flow.",
+        from_email="sender@real-domain.com",
+        to=[recipient],
+    )
+
+    sent_count = ResendEmailBackend().send_messages([email_message])
+
+    assert sent_count == 1
+    assert send.call_args.args[0]["to"] == [recipient]
+
+
+def test_site_from_email_prefers_default_for_generated_sender(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
+    site = SimpleNamespace(domain="app-staging.openbase.cloud", name="Staging")
+    site_attributes = SimpleNamespace(
+        from_email="team@app-staging.openbase.cloud",
+    )
+
+    assert get_effective_site_from_email(site, site_attributes) == "team@openbase.cloud"
+
+
+def test_site_from_email_keeps_custom_sender(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
+    site = SimpleNamespace(domain="tenant.example.com", name="Tenant")
+    site_attributes = SimpleNamespace(from_email="support@example.com")
+
+    assert get_effective_site_from_email(site, site_attributes) == "support@example.com"
 
 
 def test_backend_removes_filtered_addresses_from_every_recipient_field(

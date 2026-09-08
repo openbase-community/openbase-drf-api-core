@@ -6,15 +6,17 @@ from django.contrib.sites.models import Site
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-
 pytestmark = pytest.mark.django_db
 
 
 def test_ensure_google_oauth_skips_without_credentials_in_non_interactive_mode(
     monkeypatch,
 ):
+    monkeypatch.delenv("GOOGLE_OAUTH_CREDENTIALS_JSON", raising=False)
     call_command("ensure_default_sites")
-    monkeypatch.setattr("builtins.input", lambda: pytest.fail("input() should not be called"))
+    monkeypatch.setattr(
+        "builtins.input", lambda: pytest.fail("input() should not be called")
+    )
     stdout = StringIO()
 
     call_command("ensure_google_oauth", non_interactive=True, stdout=stdout)
@@ -34,7 +36,9 @@ def test_ensure_google_oauth_uses_credentials_json_for_default_site():
     }
     """
 
-    call_command("ensure_google_oauth", credentials_json=credentials_json, name="Dev App")
+    call_command(
+        "ensure_google_oauth", credentials_json=credentials_json, name="Dev App"
+    )
 
     social_app = SocialApp.objects.get(provider="google")
 

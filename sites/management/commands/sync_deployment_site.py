@@ -1,3 +1,5 @@
+import os
+
 from django.contrib.sites.models import Site
 from django.core.management import BaseCommand, CommandError, call_command
 
@@ -44,7 +46,13 @@ class Command(BaseCommand):
             "s3_custom_domain": str(options["s3_custom_domain"]).strip().lower(),
             "stripe_product_id": "prod_implementme",
             "stripe_price_cents": 2000,
-            "from_email": f"team@{domain}",
+            # Prefer an explicitly configured sender (consistent with
+            # ensure_default_sites) so a deployment can send from a verified
+            # Resend domain instead of team@<domain>, which is often not a
+            # verified sending domain (e.g. app.openbase.cloud). Fall back to
+            # team@<domain> when DEFAULT_FROM_EMAIL is not set.
+            "from_email": os.environ.get("DEFAULT_FROM_EMAIL", "").strip()
+            or f"team@{domain}",
         }
 
         site, _created = Site.objects.update_or_create(

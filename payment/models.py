@@ -62,6 +62,10 @@ class Subscription(models.Model):
     expiration_date = models.DateTimeField()
     platform_data = models.JSONField(default=dict, blank=True)
     is_sandbox = models.BooleanField(default=False)
+    stripe_event_created = models.BigIntegerField(null=True, blank=True)
+    stripe_event_id = models.CharField(max_length=255, blank=True)
+    stripe_event_terminal = models.BooleanField(default=False)
+    stripe_terminal_cleanup_completed = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.account} subscription"

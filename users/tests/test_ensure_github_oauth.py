@@ -12,6 +12,7 @@ pytestmark = pytest.mark.django_db
 def test_ensure_github_oauth_skips_without_credentials_in_non_interactive_mode(
     monkeypatch,
 ):
+    monkeypatch.delenv("GITHUB_OAUTH_CREDENTIALS_JSON", raising=False)
     call_command("ensure_default_sites")
     monkeypatch.setattr(
         "builtins.input", lambda: pytest.fail("input() should not be called")

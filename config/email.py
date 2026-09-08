@@ -44,6 +44,17 @@ def format_from_email(display_name: str, from_email: str) -> str:
     return f"{display_name} <{from_email}>"
 
 
+def get_effective_site_from_email(site: Site, site_attributes: SiteAttributes) -> str:
+    from_email = site_attributes.from_email.strip()
+    default_from_email = os.environ.get("DEFAULT_FROM_EMAIL", "").strip()
+    generated_from_email = f"team@{site.domain.strip().casefold()}"
+    if default_from_email and (
+        not from_email or from_email.casefold() == generated_from_email
+    ):
+        return default_from_email
+    return from_email
+
+
 def get_request_from_email(request) -> str:
     site = get_current_site(request)
     site_attributes = get_current_site_attributes(request)
@@ -55,7 +66,9 @@ def get_request_from_email(request) -> str:
             "Current site attributes are required to determine the from email address."
         )
         raise ValueError(msg)
-    return format_from_email(site.name, site_attributes.from_email)
+    return format_from_email(
+        site.name, get_effective_site_from_email(site, site_attributes)
+    )
 
 
 def get_site_from_email(site_id: int) -> str:
@@ -65,7 +78,9 @@ def get_site_from_email(site_id: int) -> str:
     except SiteAttributes.DoesNotExist as exc:
         msg = f"Site {site_id} is missing site attributes required for email sending."
         raise ValueError(msg) from exc
-    return format_from_email(site.name, site_attributes.from_email)
+    return format_from_email(
+        site.name, get_effective_site_from_email(site, site_attributes)
+    )
 
 
 class ResendEmailBackend(BaseEmailBackend):
