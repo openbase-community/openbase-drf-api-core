@@ -14,6 +14,10 @@ def _get_required_apns_setting(name: str) -> str:
     return value
 
 
+def get_apns_bundle_id() -> str:
+    return _get_required_apns_setting("APPLE_BUNDLE_ID")
+
+
 async def send_apns_request(
     *,
     token: str,
