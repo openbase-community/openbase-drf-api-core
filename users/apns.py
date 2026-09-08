@@ -9,9 +9,8 @@ from django.core.exceptions import ImproperlyConfigured
 def _get_required_apns_setting(name: str) -> str:
     value = getattr(settings, name, None)
     if not isinstance(value, str) or not value.strip():
-        raise ImproperlyConfigured(
-            f"{name} must be configured as a non-empty string to send APNS notifications."
-        )
+        msg = f"{name} must be configured as a non-empty string to send APNS notifications."
+        raise ImproperlyConfigured(msg)
     return value
 
 
@@ -25,12 +24,14 @@ async def send_apns_request(
     priority: int = 10,
     sandbox: bool | None = None,
 ) -> httpx.Response:
+    if not topic:
+        msg = (
+            "APNs topic is empty — set APPLE_BUNDLE_ID (the app's bundle "
+            "identifier) in this deployment's config."
+        )
+        raise ValueError(msg)
     use_sandbox = settings.NOTIFICATIONS_SANDBOX if sandbox is None else sandbox
-    host = (
-        "api.sandbox.push.apple.com"
-        if use_sandbox
-        else "api.push.apple.com"
-    )
+    host = "api.sandbox.push.apple.com" if use_sandbox else "api.push.apple.com"
     team_id = _get_required_apns_setting("NOTIFICATIONS_APPLE_TEAM_ID")
     auth_key_id = _get_required_apns_setting("NOTIFICATIONS_APPLE_AUTH_KEY_ID")
     p8_contents = _get_required_apns_setting("NOTIFICATIONS_APPLE_P8_CONTENTS")
