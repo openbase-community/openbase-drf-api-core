@@ -78,18 +78,26 @@ async def send_fcm_request(
     notification: dict[str, str] | None = None,
     android_priority: str = "high",
     ttl_seconds: int | None = None,
+    android_notification_tag: str | None = None,
 ) -> httpx.Response:
     """POST one message to the FCM HTTP v1 API.
 
     Returns the raw response; callers interpret a 404 (UNREGISTERED) as an
     invalid token to prune, mirroring how send_apns_request callers handle
     BadDeviceToken/Unregistered.
+
+    android_notification_tag sets the tray notification's tag so a
+    system-posted (backgrounded-app) notification is addressable: same-tag
+    posts coalesce, and the app can find and cancel it by tag once the
+    underlying item no longer needs attention.
     """
     account = _get_service_account()
     access_token = await _get_access_token(account)
     android: dict = {"priority": android_priority}
     if ttl_seconds is not None:
         android["ttl"] = f"{max(0, ttl_seconds)}s"
+    if android_notification_tag and notification:
+        android["notification"] = {"tag": android_notification_tag}
     message: dict = {"token": token, "android": android}
     if data:
         message["data"] = data
