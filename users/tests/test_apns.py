@@ -1,5 +1,6 @@
-# ruff: noqa: S106 - APNs device-token fixtures are identifiers, not credentials.
+import asyncio
 
+# ruff: noqa: S106 - APNs device-token fixtures are identifiers, not credentials.
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -7,6 +8,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from users.apns import send_apns_request
 from users.models import UserAPNSToken
 from users.views import APNSView
 
@@ -80,3 +82,16 @@ def _create_user(email):
         return_value=SimpleNamespace(id="cus_test"),
     ):
         return get_user_model().objects.create_user(email=email)
+
+
+def test_send_apns_request_rejects_empty_topic():
+    with pytest.raises(ValueError, match="APPLE_BUNDLE_ID"):
+        asyncio.run(
+            send_apns_request(
+                token="t",
+                payload={},
+                push_type="alert",
+                topic=None,
+                expiration=0,
+            )
+        )
