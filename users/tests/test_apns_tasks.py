@@ -1,7 +1,7 @@
 # ruff: noqa: S106 - APNs device-token fixtures are identifiers, not credentials.
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -82,3 +82,78 @@ def test_send_apn_requires_bundle_id_before_provider_request():
         )
 
     send_request.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("status_code", "reason"),
+    [
+        (400, "BadDeviceToken"),
+        (410, "Unregistered"),
+    ],
+)
+def test_send_apn_deletes_definitively_invalid_tokens(status_code, reason):
+    with patch(
+        "users.models.stripe.Customer.create",
+        return_value=SimpleNamespace(id="cus_test"),
+    ):
+        user = get_user_model().objects.create_user(email="invalid-apn@example.com")
+    token = UserAPNSToken.objects.create(user=user, token="invalid-device-token")
+    mocked_send = AsyncMock(
+        return_value=SimpleNamespace(
+            status_code=status_code,
+            content=(f'{{"reason":"{reason}"}}').encode(),
+        )
+    )
+
+    with (
+        patch("users.tasks.send_apns_request", mocked_send),
+        patch("users.tasks.logger") as logger,
+    ):
+        async_to_sync(send_apn.original_func)(
+            user.pk,
+            {"title": "Dottie", "body": "Review is ready"},
+        )
+
+    assert not UserAPNSToken.objects.filter(pk=token.pk).exists()
+    logger.info.assert_called_once_with(
+        "Removed rejected APN token",
+        status_code=status_code,
+        reason=reason,
+        user_id=user.pk,
+    )
+    logger.error.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_send_apn_keeps_token_for_non_token_rejection():
+    with patch(
+        "users.models.stripe.Customer.create",
+        return_value=SimpleNamespace(id="cus_test"),
+    ):
+        user = get_user_model().objects.create_user(email="provider-error@example.com")
+    token = UserAPNSToken.objects.create(user=user, token="device-token")
+    mocked_send = AsyncMock(
+        return_value=SimpleNamespace(
+            status_code=403,
+            content=b'{"reason":"InvalidProviderToken"}',
+        )
+    )
+
+    with (
+        patch("users.tasks.send_apns_request", mocked_send),
+        patch("users.tasks.logger") as logger,
+    ):
+        async_to_sync(send_apn.original_func)(
+            user.pk,
+            {"title": "Dottie", "body": "Review is ready"},
+        )
+
+    assert UserAPNSToken.objects.filter(pk=token.pk).exists()
+    logger.error.assert_called_once_with(
+        "Could not send APN",
+        status_code=403,
+        reason="InvalidProviderToken",
+        response_content='{"reason":"InvalidProviderToken"}',
+        user_id=user.pk,
+    )
