@@ -8,7 +8,7 @@ from twilio.rest import Client
 
 from config.email import get_site_from_email
 from config.taskiq_config import broker
-from users.apns import send_apns_request
+from users.apns import get_apns_bundle_id, send_apns_request
 from users.models import UserAPNSToken
 
 required_prefix = "From your assistant: "
@@ -72,7 +72,7 @@ async def send_apn(user_id, message, data: dict | None = None):
     if not token_instance:
         return
     token = token_instance.token
-    bundle_id = settings.APPLE_BUNDLE_ID
+    bundle_id = get_apns_bundle_id()
     payload = {
         "aps": {
             "alert": message,

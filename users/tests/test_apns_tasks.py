@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
 from users.models import UserAPNSToken
@@ -52,6 +53,35 @@ def test_send_apn_declares_alert_push_type():
 
     assert requests[0][1]["headers"]["apns-push-type"] == "alert"
     assert requests[0][1]["headers"]["apns-topic"] == "com.example.app"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    NOTIFICATIONS_APPLE_TEAM_ID="team-id",
+    NOTIFICATIONS_APPLE_AUTH_KEY_ID="key-id",
+    NOTIFICATIONS_APPLE_P8_CONTENTS="test-signing-key",
+    NOTIFICATIONS_SANDBOX=False,
+    APPLE_BUNDLE_ID=None,
+)
+def test_send_apn_requires_bundle_id_before_provider_request():
+    with patch(
+        "users.models.stripe.Customer.create",
+        return_value=SimpleNamespace(id="cus_test"),
+    ):
+        user = get_user_model().objects.create_user(email="first@example.com")
+    UserAPNSToken.objects.create(user=user, token="device-token")
+
+    with (
+        patch("users.tasks.send_apns_request") as send_request,
+        pytest.raises(ImproperlyConfigured, match="APPLE_BUNDLE_ID"),
+    ):
+        async_to_sync(send_apn.original_func)(
+            user.pk,
+            {"title": "Dottie", "body": "Review is ready"},
+            {"openbase_destination": "threads", "thread_id": "thread-42"},
+        )
+
+    send_request.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)

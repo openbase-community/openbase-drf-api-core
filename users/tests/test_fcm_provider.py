@@ -83,6 +83,39 @@ def test_send_fcm_request_exchanges_oauth_and_posts_v1_message():
 
 
 @override_settings(NOTIFICATIONS_FCM_SERVICE_ACCOUNT_JSON=json.dumps(SERVICE_ACCOUNT))
+def test_send_fcm_request_sets_android_notification_tag():
+    requests = []
+    with (
+        patch("users.fcm.jwt.encode", return_value="signed-assertion"),
+        patch(
+            "users.fcm.httpx.AsyncClient",
+            side_effect=lambda **_kwargs: Client(requests),
+        ),
+    ):
+        async_to_sync(send_fcm_request)(
+            token="fcm-token-1",
+            notification={"title": "T", "body": "B"},
+            data={"notification_id": "thread:t-1"},
+            android_notification_tag="thread:t-1",
+        )
+        # Tag applies only to display notifications; data-only messages have
+        # no tray entry to address.
+        async_to_sync(send_fcm_request)(
+            token="fcm-token-1",
+            data={"invitation_id": "x"},
+            android_notification_tag="ignored",
+        )
+
+    _send_url, send_kwargs = requests[1]
+    assert send_kwargs["json"]["message"]["android"] == {
+        "priority": "high",
+        "notification": {"tag": "thread:t-1"},
+    }
+    _send_url, data_only_kwargs = requests[2]
+    assert data_only_kwargs["json"]["message"]["android"] == {"priority": "high"}
+
+
+@override_settings(NOTIFICATIONS_FCM_SERVICE_ACCOUNT_JSON=json.dumps(SERVICE_ACCOUNT))
 def test_send_fcm_request_reuses_cached_access_token():
     requests = []
     with (
