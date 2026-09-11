@@ -13,6 +13,7 @@ from django.urls import path
 from config.admin import site as dynamic_admin_site
 from contact.models import ContactSubmission
 from sites.models import SiteAttributes
+from sites.utils import _site_attributes_cache
 from sites.views import serve_index
 
 urlpatterns = [
@@ -27,6 +28,7 @@ pytestmark = pytest.mark.django_db
 def clear_site_cache():
     yield
     Site.objects.clear_cache()
+    _site_attributes_cache.clear()
 
 
 @override_settings(
@@ -192,6 +194,16 @@ def test_ensure_default_sites_reads_allowed_hosts_from_environment(monkeypatch):
         .exclude(pk=1)
         .exists()
     )
+
+
+@override_settings(ALLOWED_HOSTS=["missing.example.com"], SITE_ID=None)
+def test_serve_index_returns_not_found_when_site_does_not_exist(rf):
+    request = rf.get("/", HTTP_HOST="missing.example.com", HTTP_ACCEPT="text/html")
+
+    response = async_to_sync(serve_index)(request, "")
+
+    assert response.status_code == 404
+    assert response.content == b"Site not found."
 
 
 def test_sync_deployment_site_creates_site_and_attributes(monkeypatch):

@@ -1,3 +1,5 @@
+import json
+
 import structlog
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -6,10 +8,11 @@ from twilio.rest import Client
 
 from config.email import get_site_from_email
 from config.taskiq_config import broker
-from users.apns import send_apns_request
+from users.apns import get_apns_bundle_id, send_apns_request
 from users.models import UserAPNSToken
 
 required_prefix = "From your assistant: "
+INVALID_APNS_TOKEN_REASONS = {"BadDeviceToken", "Unregistered"}
 
 
 logger = structlog.get_logger(__name__)
@@ -69,7 +72,7 @@ async def send_apn(user_id, message, data: dict | None = None):
     if not token_instance:
         return
     token = token_instance.token
-    bundle_id = settings.APPLE_BUNDLE_ID
+    bundle_id = get_apns_bundle_id()
     payload = {
         "aps": {
             "alert": message,
@@ -86,10 +89,32 @@ async def send_apn(user_id, message, data: dict | None = None):
         topic=bundle_id,
         expiration=0,
     )
-    if response.status_code >= 400:
-        logger.error(
-            "Could not send APN",
+    if response.status_code < 400:
+        return
+
+    reason = None
+    if response.content:
+        try:
+            reason = json.loads(response.content).get("reason")
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            reason = None
+    if response.status_code in {400, 410} and reason in INVALID_APNS_TOKEN_REASONS:
+        await UserAPNSToken.objects.filter(
+            pk=token_instance.pk,
+            token=token,
+        ).adelete()
+        logger.info(
+            "Removed rejected APN token",
             status_code=response.status_code,
-            response_content=response.content.decode(errors="replace"),
+            reason=reason,
             user_id=user_id,
         )
+        return
+
+    logger.error(
+        "Could not send APN",
+        status_code=response.status_code,
+        reason=reason,
+        response_content=response.content.decode(errors="replace"),
+        user_id=user_id,
+    )
