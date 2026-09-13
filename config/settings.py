@@ -165,7 +165,9 @@ USE_TZ = True
 AWS_S3_CUSTOM_DOMAIN = os.environ.get("AWS_S3_CUSTOM_DOMAIN", "")
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
 
-if DEBUG:
+# Self-hosted deployments run without S3: no AWS_S3_CUSTOM_DOMAIN means
+# filesystem media and whitenoise statics, in production mode too.
+if DEBUG or not AWS_S3_CUSTOM_DOMAIN:
     STATIC_URL = "/static/"
     STATIC_ROOT = BASE_DIR / "staticfiles"
 
@@ -338,7 +340,8 @@ NOTIFICATIONS_FCM_SERVICE_ACCOUNT_JSON = os.environ.get(
 if not DEBUG:
     CSRF_TRUSTED_ORIGINS = [f"https://{domain}" for domain in ALLOWED_HOSTS]
     CORS_ALLOWED_ORIGINS = CSRF_TRUSTED_ORIGINS.copy()
-    CORS_ALLOWED_ORIGINS.insert(0, f"https://{AWS_S3_CUSTOM_DOMAIN}")
+    if AWS_S3_CUSTOM_DOMAIN:
+        CORS_ALLOWED_ORIGINS.insert(0, f"https://{AWS_S3_CUSTOM_DOMAIN}")
 else:
     CSRF_TRUSTED_ORIGINS = [
         "http://localhost:3000",
