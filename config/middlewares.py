@@ -4,7 +4,7 @@ from asgiref.sync import (
 )
 from django.conf import settings
 from django.contrib import admin
-from django.contrib.sites.models import SITE_CACHE
+from django.contrib.sites.models import SITE_CACHE, Site
 from django.contrib.sites.shortcuts import get_current_site
 from django.http import JsonResponse
 from django.utils.decorators import sync_and_async_middleware
@@ -60,17 +60,24 @@ def _is_admin_path(path: str) -> bool:
     return path == admin_prefix.removesuffix("/") or path.startswith(admin_prefix)
 
 
+def _get_admin_site(request):
+    host = request.get_host()
+    if host in SITE_CACHE:
+        return SITE_CACHE[host]
+
+    try:
+        return get_current_site(request)
+    except Site.DoesNotExist:
+        return None
+
+
 @sync_and_async_middleware
 def admin_name_middleware(get_response):
     if iscoroutinefunction(get_response):
 
         async def async_impl(request):
             if _is_admin_path(request.path):
-                host = request.get_host()
-                if host in SITE_CACHE:
-                    site = SITE_CACHE[host]
-                else:
-                    site = await sync_to_async(get_current_site)(request)
+                site = await sync_to_async(_get_admin_site)(request)
                 _set_admin_headers(site)
             response = await get_response(request)
             return response
@@ -79,7 +86,7 @@ def admin_name_middleware(get_response):
 
     def sync_impl(request):
         if _is_admin_path(request.path):
-            site = get_current_site(request)
+            site = _get_admin_site(request)
             _set_admin_headers(site)
         response = get_response(request)
         return response
