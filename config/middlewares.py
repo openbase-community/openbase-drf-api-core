@@ -1,3 +1,5 @@
+import asyncio
+
 from asgiref.sync import (
     iscoroutinefunction,
     sync_to_async,
@@ -6,6 +8,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.sites.models import SITE_CACHE
 from django.contrib.sites.shortcuts import get_current_site
+from django.http import HttpResponse
 from django.http import JsonResponse
 from django.utils.decorators import sync_and_async_middleware
 
@@ -65,15 +68,18 @@ def admin_name_middleware(get_response):
     if iscoroutinefunction(get_response):
 
         async def async_impl(request):
-            if _is_admin_path(request.path):
-                host = request.get_host()
-                if host in SITE_CACHE:
-                    site = SITE_CACHE[host]
-                else:
-                    site = await sync_to_async(get_current_site)(request)
-                _set_admin_headers(site)
-            response = await get_response(request)
-            return response
+            try:
+                if _is_admin_path(request.path):
+                    host = request.get_host()
+                    if host in SITE_CACHE:
+                        site = SITE_CACHE[host]
+                    else:
+                        site = await sync_to_async(get_current_site)(request)
+                    _set_admin_headers(site)
+                response = await get_response(request)
+                return response
+            except asyncio.CancelledError:
+                return HttpResponse(status=499)
 
         return async_impl
 

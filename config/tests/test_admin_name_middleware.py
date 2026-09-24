@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
@@ -18,5 +19,17 @@ def test_admin_name_middleware_skips_site_lookup_for_async_api_request(rf):
     assert response.status_code == 200
 
 
+def test_admin_name_middleware_treats_async_cancel_as_client_disconnect(rf):
+    request = rf.get("/_allauth/app/v1/config", HTTP_HOST="unknown.example.com")
+
+    response = async_to_sync(admin_name_middleware(_async_cancelled_response))(request)
+
+    assert response.status_code == 499
+
+
 async def _async_ok_response(_request):
     return JsonResponse({"ok": True})
+
+
+async def _async_cancelled_response(_request):
+    raise asyncio.CancelledError
