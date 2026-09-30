@@ -83,6 +83,8 @@ class ApiCoreJWTTokenStrategy(JWTTokenStrategy):
         if user_session_payload is None:
             return None
         user, session, payload = user_session_payload
+        if user is None or not user.is_authenticated:
+            return None
         access_token = internal.create_access_token(
             user, session, self.get_claims(user)
         )

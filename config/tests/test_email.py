@@ -4,6 +4,7 @@ from django.core.mail import EmailMessage
 
 from config.email import (
     ResendEmailBackend,
+    format_from_email,
     get_effective_site_from_email,
     is_filtered_email_address,
 )
@@ -86,6 +87,29 @@ def test_backend_submits_official_resend_field_test_recipient(monkeypatch, mocke
     assert send.call_args.args[0]["to"] == [recipient]
 
 
+def test_format_from_email_wraps_plain_address_with_site_name():
+    assert (
+        format_from_email("Openbase Cloud", "team@openbase.cloud")
+        == "Openbase Cloud <team@openbase.cloud>"
+    )
+
+
+def test_format_from_email_preserves_configured_display_name():
+    assert (
+        format_from_email("App Staging", "Openbase Cloud <team@openbase.cloud>")
+        == "Openbase Cloud <team@openbase.cloud>"
+    )
+
+
+def test_format_from_email_rejects_malformed_sender():
+    try:
+        format_from_email("Openbase Cloud", "Openbase Cloud <not-an-address>")
+    except ValueError as exc:
+        assert str(exc) == "From email address is invalid."
+    else:
+        raise AssertionError("Malformed sender should raise ValueError.")
+
+
 def test_site_from_email_prefers_default_for_generated_sender(monkeypatch):
     monkeypatch.setenv("DEFAULT_FROM_EMAIL", "team@openbase.cloud")
     site = SimpleNamespace(domain="app-staging.openbase.cloud", name="Staging")
@@ -94,6 +118,21 @@ def test_site_from_email_prefers_default_for_generated_sender(monkeypatch):
     )
 
     assert get_effective_site_from_email(site, site_attributes) == "team@openbase.cloud"
+
+
+def test_site_from_email_preserves_formatted_default_sender(monkeypatch):
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "Openbase Cloud <team@openbase.cloud>")
+    site = SimpleNamespace(domain="app-staging.openbase.cloud", name="Staging")
+    site_attributes = SimpleNamespace(
+        from_email="team@app-staging.openbase.cloud",
+    )
+
+    sender = format_from_email(
+        site.name,
+        get_effective_site_from_email(site, site_attributes),
+    )
+
+    assert sender == "Openbase Cloud <team@openbase.cloud>"
 
 
 def test_site_from_email_keeps_custom_sender(monkeypatch):
