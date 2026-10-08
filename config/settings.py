@@ -8,7 +8,10 @@ from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
-from config.sentry import filter_expected_websocket_disconnects
+from config.sentry import (
+    filter_expected_websocket_disconnects,
+    is_handled_logging_exception,
+)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -415,7 +418,11 @@ SENTRY_DSN = os.environ.get("SENTRY_DSN")
 
 def is_expected_client_disconnect_event(event):
     exception_values = (event.get("exception") or {}).get("values") or []
-    if not any(value.get("type") == "CancelledError" for value in exception_values):
+    if not exception_values:
+        return False
+    if any(value.get("type") != "CancelledError" for value in exception_values):
+        return False
+    if not all(is_handled_logging_exception(value) for value in exception_values):
         return False
 
     request = event.get("request") or {}
@@ -425,7 +432,7 @@ def is_expected_client_disconnect_event(event):
     paths = {
         path for path in (request_path, transaction) if isinstance(path, str) and path
     }
-    return "/api/csrf/" in paths
+    return bool(paths)
 
 
 def filter_expected_sentry_events(event, hint):

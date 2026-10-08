@@ -23,7 +23,7 @@ def _is_handled_websocket_disconnect(event):
         return False
 
     has_handled_disconnect = any(
-        _is_handled_logging_exception(exception_value)
+        is_handled_logging_exception(exception_value)
         and exception_value.get("type") in _WEBSOCKET_DISCONNECT_TYPES
         for exception_value in exception_values
     )
@@ -36,7 +36,7 @@ def _is_handled_websocket_disconnect(event):
     )
 
 
-def _is_handled_logging_exception(exception_value):
+def is_handled_logging_exception(exception_value):
     mechanism = exception_value.get("mechanism") or {}
     return mechanism.get("type") == "logging" and mechanism.get("handled") is True
 
@@ -70,7 +70,7 @@ def _is_handled_websocket_keepalive_timeout(event):
         return False
 
     for exception_value in exception_values:
-        if not _is_handled_logging_exception(exception_value):
+        if not is_handled_logging_exception(exception_value):
             continue
 
         if exception_value.get("type") != "ConnectionClosedError":
