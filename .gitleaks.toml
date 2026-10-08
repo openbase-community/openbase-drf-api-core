@@ -1,0 +1,11 @@
+# Repo-specific gitleaks allowlist, read by the workspace git hooks
+# (.githooks/ in the Openbase Cloud workspace). Keep entries narrow.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder private keys ('fake' body) in the Apple OAuth tests"
+condition = "AND"
+targetRules = ["private-key"]
+paths = ['''^users/tests/test_ensure_apple_oauth\.py$''']
