@@ -29,13 +29,22 @@ def stripe_event_to_analytics_event(event) -> AnalyticsEvent:
 
     properties = {
         key: _value(stripe_object, key)
+        # Revenue fields cover both the webhook endpoint's pinned legacy API
+        # version (invoice: amount_due/total/subtotal/paid; charge:
+        # amount/amount_refunded/refunded) and current versions (amount_paid,
+        # amount_remaining, status), so revenue stays queryable either way.
         for key in (
             "amount",
             "amount_due",
             "amount_paid",
+            "amount_refunded",
             "amount_remaining",
             "currency",
+            "paid",
+            "refunded",
             "status",
+            "subtotal",
+            "total",
             "cancel_at_period_end",
             "cancellation_reason",
         )
