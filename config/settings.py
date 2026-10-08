@@ -462,6 +462,13 @@ if ACCOUNT_EMAIL_VERIFICATION not in {"mandatory", "optional", "none"}:
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
 ACCOUNT_LOGIN_BY_CODE_ENABLED = True
+# Signup verifies the address with a code typed into the client instead of a
+# link: a phone-only user (mobile app + hosted workspace, no computer) never
+# has to leave the app for a browser. The web app and both mobile auth
+# clients read `email_verification_by_code_enabled` from the headless config.
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = os.environ.get(
+    "ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
 ACCOUNT_CONFIRM_EMAIL_ON_GET = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True
