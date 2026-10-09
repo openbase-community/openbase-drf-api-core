@@ -18,6 +18,7 @@ from django.core.asgi import get_asgi_application
 
 import users.routing
 from config.installed_apps import get_installed_apps
+from config.sentry import track_http_disconnects
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 os.environ["ASGI_THREADS"] = "4"
@@ -60,7 +61,7 @@ websocket_application = AuthMiddlewareStack(URLRouter(all_websocket_patterns))
 
 application = ProtocolTypeRouter(
     {
-        "http": django_asgi_app,
+        "http": track_http_disconnects(django_asgi_app),
         "websocket": AllowMissingOriginValidator(websocket_application),
     }
 )
