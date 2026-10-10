@@ -128,8 +128,19 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
                 return "ignored_stale"
             if (
                 event_created == stored_subscription.stripe_event_created
-                and stored_subscription.stripe_event_terminal
                 and not incoming_terminal
+                and (
+                    stored_subscription.stripe_event_terminal
+                    or (
+                        event_stripe_id == stored_subscription.stripe_subscription_id
+                        and stored_subscription.platform_data.get("status")
+                        == "past_due"
+                        and not settings.OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS
+                        and not stripe_subscription_period_is_unpaid(
+                            subscription_object
+                        )
+                    )
+                )
             ):
                 return "ignored_stale"
             # Stripe stamps the incomplete "created" event and the "updated"

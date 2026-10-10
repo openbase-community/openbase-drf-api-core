@@ -364,8 +364,7 @@ def test_past_due_without_a_stored_subscription_grants_no_access():
     assert not Subscription.objects.get(account=account).is_active()
 
 
-@pytest.mark.parametrize("paid_event_created", [300, 301])
-def test_past_due_then_successful_retry_regrants_access(paid_event_created):
+def test_past_due_then_later_successful_retry_regrants_access():
     user = get_user_model().objects.create_user(email="retried@example.com")
     account = Account.objects.get(user_owner=user)
     _result, paid_through, unpaid_through = _apply_failed_renewal(account)
@@ -374,7 +373,7 @@ def test_past_due_then_successful_retry_regrants_access(paid_event_created):
         account=account,
         event_type="customer.subscription.updated",
         event_id="evt_retry_paid",
-        event_created=paid_event_created,
+        event_created=301,
         subscription_object={
             **_stripe_object("sub_renewal", "active"),
             "current_period_start": int(paid_through.timestamp()),
@@ -429,6 +428,61 @@ def test_same_second_rollover_and_failed_renewal_never_grants_the_unpaid_month()
     assert result == "past_due"
     assert subscription.expiration_date <= paid_through
     assert not subscription.is_active()
+
+
+@pytest.mark.parametrize("grants_grace", [False, True])
+@pytest.mark.parametrize("reverse_delivery", [False, True])
+@pytest.mark.parametrize("same_second", [False, True])
+@pytest.mark.parametrize("active_kind", ["rollover", "retry"])
+def test_renewal_event_ordering(
+    grants_grace, reverse_delivery, same_second, active_kind
+):
+    user = get_user_model().objects.create_user(email="ordering-matrix@example.com")
+    account = Account.objects.get(user_owner=user)
+    paid_through, unpaid_through = _renewal_periods()
+    snapshot = {
+        **_stripe_object("sub_ordering_matrix", "active"),
+        "current_period_start": int(paid_through.timestamp()),
+        "current_period_end": int(unpaid_through.timestamp()),
+    }
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_paid_month",
+        event_created=100,
+        subscription_object={
+            **snapshot,
+            "current_period_start": int(
+                (paid_through - timedelta(days=30)).timestamp()
+            ),
+            "current_period_end": int(paid_through.timestamp()),
+        },
+    )
+    statuses = (
+        ["active", "past_due"] if active_kind == "rollover" else ["past_due", "active"]
+    )
+    events = [
+        (status, 200 if same_second else 200 + index)
+        for index, status in enumerate(statuses)
+    ]
+    if reverse_delivery:
+        events.reverse()
+    with override_settings(OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS=grants_grace):
+        for status, event_created in events:
+            apply_stripe_subscription_event(
+                account=account,
+                event_type="customer.subscription.updated",
+                event_id=f"evt_{status}",
+                event_created=event_created,
+                subscription_object={**snapshot, "status": status},
+            )
+
+    subscription = Subscription.objects.get(account=account)
+    expected_active = grants_grace or (active_kind == "retry" and not same_second)
+    assert subscription.is_active() == expected_active
+    assert subscription.expiration_date == (
+        unpaid_through if expected_active else paid_through
+    )
 
 
 @override_settings(
