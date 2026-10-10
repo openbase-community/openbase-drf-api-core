@@ -372,6 +372,14 @@ CORS_ALLOW_CREDENTIALS = True
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+# Whether a ``past_due`` Stripe subscription (its renewal invoice failed and
+# Smart Retries are still running) keeps paid access through the unpaid
+# period. Stripe advances the period before the renewal is paid, so granting
+# it means 1-3 weeks of paid caps for free whenever a card fails. Off by
+# default: access ends with the last paid period until a retry succeeds.
+OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS = (
+    os.environ.get("OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS", "0") == "1"
+)
 # The pricing menu is supplied by the consuming app's api_core.settings
 # entry-point module (see payment/tiers.py). Empty means "no tiers configured":
 # checkout rejects every tier until an app provides its table.

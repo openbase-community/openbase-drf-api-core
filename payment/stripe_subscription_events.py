@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -31,6 +32,12 @@ def stripe_subscription_period_end_timestamp(subscription_object):
     )
 
 
+def stripe_subscription_period_start_timestamp(subscription_object):
+    return subscription_object.get("current_period_start") or stripe_subscription_item(
+        subscription_object
+    ).get("current_period_start")
+
+
 def stripe_subscription_is_terminal(subscription_object) -> bool:
     """Return whether Stripe says access has actually ended."""
     return bool(
@@ -50,6 +57,37 @@ STRIPE_NO_ACCESS_STATUSES = frozenset({"incomplete", "paused"})
 
 def stripe_subscription_grants_access(subscription_object) -> bool:
     return subscription_object.get("status") not in STRIPE_NO_ACCESS_STATUSES
+
+
+def stripe_subscription_period_is_unpaid(subscription_object) -> bool:
+    """Whether the snapshot's current period must not extend access: an
+    unpaid status, or ``past_due`` (renewal invoice failed, Smart Retries
+    still running) unless the deployment grants access while past due."""
+    if not stripe_subscription_grants_access(subscription_object):
+        return True
+    return (
+        subscription_object.get("status") == "past_due"
+        and not settings.OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS
+    )
+
+
+def unpaid_period_expiration(
+    subscription_object, stored_subscription, period_end: datetime
+) -> datetime:
+    """Expiration for a ``past_due`` snapshot. Stripe advances the period at
+    renewal before the renewal invoice is paid (and the "updated" snapshot
+    for that rollover is still active), so the snapshot's period end would
+    read as paid through the new, unpaid month. Access never runs past what
+    was already granted or past the unpaid period's start, whichever is
+    earlier; the active snapshot after a successful retry re-grants it."""
+    expiration = period_end
+    period_start = stripe_subscription_period_start_timestamp(subscription_object)
+    if period_start:
+        expiration = min(expiration, datetime.fromtimestamp(period_start, tz=UTC))
+    granted_through = (
+        stored_subscription.expiration_date if stored_subscription else timezone.now()
+    )
+    return min(expiration, granted_through)
 
 
 def apply_stripe_subscription_event(  # noqa: PLR0911
@@ -90,14 +128,30 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
                 return "ignored_stale"
             if (
                 event_created == stored_subscription.stripe_event_created
-                and stored_subscription.stripe_event_terminal
                 and not incoming_terminal
+                and (
+                    stored_subscription.stripe_event_terminal
+                    or (
+                        event_stripe_id == stored_subscription.stripe_subscription_id
+                        and stored_subscription.platform_data.get("status")
+                        == "past_due"
+                        and not settings.OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS
+                        and not stripe_subscription_period_is_unpaid(
+                            subscription_object
+                        )
+                    )
+                )
             ):
                 return "ignored_stale"
             # Stripe stamps the incomplete "created" event and the "updated"
             # event for its successful first payment with the same second, and
-            # delivery order is not guaranteed: never let the unpaid snapshot
-            # revoke a paid one from the same second.
+            # delivery order is not guaranteed: never let that unpaid snapshot
+            # revoke a paid one from the same second. The shield is deliberately
+            # NOT extended to past_due: a stored active row is as likely to be
+            # the still-active period rollover (unpaid) as a paid retry, and
+            # nothing in the snapshot tells them apart, so the tie goes to the
+            # unpaid reading. The rare paid retry stamped in the same second
+            # as its past_due re-grants on the next subscription snapshot.
             if (
                 event_created == stored_subscription.stripe_event_created
                 and not incoming_terminal
@@ -107,14 +161,10 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
                 return "ignored_stale"
 
         stored_stripe_id = (
-            stored_subscription.stripe_subscription_id
-            if stored_subscription
-            else None
+            stored_subscription.stripe_subscription_id if stored_subscription else None
         )
         event_is_for_other_subscription = bool(
-            stored_stripe_id
-            and event_stripe_id
-            and event_stripe_id != stored_stripe_id
+            stored_stripe_id and event_stripe_id and event_stripe_id != stored_stripe_id
         )
         if event_is_for_other_subscription and (
             incoming_terminal or stored_subscription.is_active()
@@ -162,15 +212,22 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
         period_end = stripe_subscription_period_end_timestamp(subscription_object)
         if not period_end:
             return "missing_period_end"
+        expiration_date = datetime.fromtimestamp(period_end, tz=UTC)
+        result = "synced"
+        if stripe_subscription_period_is_unpaid(subscription_object):
+            expiration_date = unpaid_period_expiration(
+                subscription_object, stored_subscription, expiration_date
+            )
+            result = "past_due"
         Subscription.objects.update_or_create(
             account=account,
             defaults={
                 "subscription_type": stripe_subscription_product_id(
                     subscription_object
                 ),
-                "expiration_date": datetime.fromtimestamp(period_end, tz=UTC),
+                "expiration_date": expiration_date,
                 "platform_data": subscription_object,
                 **ordering_defaults,
             },
         )
-        return "synced"
+        return result

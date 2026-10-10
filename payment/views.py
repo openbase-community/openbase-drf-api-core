@@ -682,6 +682,22 @@ class StripeWebhookView(APIView):
                     stripe_subscription_id=subscription_object.get("id"),
                 )
                 return Response(status=status.HTTP_400_BAD_REQUEST)
+            elif result == "no_access":
+                # Not ignored: the snapshot was applied and access revoked
+                # while the period stays unpaid. No cancellation hooks: Stripe
+                # can still move the subscription to active.
+                logger.info(
+                    "Stripe subscription unpaid; access revoked",
+                    account_id=account.pk,
+                    event_type=event.type,
+                    stripe_status=subscription_object.get("status"),
+                )
+            elif result == "past_due":
+                logger.info(
+                    "Stripe subscription past due; access held at last paid period",
+                    account_id=account.pk,
+                    event_type=event.type,
+                )
             else:
                 logger.info(
                     "Ignored Stripe subscription webhook",
