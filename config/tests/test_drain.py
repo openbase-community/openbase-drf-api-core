@@ -1,3 +1,6 @@
+import asyncio
+
+from asgiref.sync import iscoroutinefunction
 from django.http import HttpResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
@@ -27,3 +30,21 @@ class DrainingHealthMiddlewareTests(SimpleTestCase):
 
         assert health.status_code == 503
         assert other.status_code == 200
+
+    @override_settings(WEB_HEALTH_CHECK_PATH="/api/csrf/")
+    def test_async_stack_stays_async_and_answers_503_while_draining(self):
+        # The middleware must not force Django to adapt the ASGI stack to sync.
+        async def get_response(_request):
+            return HttpResponse("ok")
+
+        middleware = DrainingHealthMiddleware(get_response)
+        assert iscoroutinefunction(middleware)
+
+        async def scenario():
+            before = await middleware(self.factory.get("/api/csrf/"))
+            drain.begin()
+            health = await middleware(self.factory.get("/api/csrf/"))
+            other = await middleware(self.factory.get("/api/openbase/audio/usage/"))
+            return before.status_code, health.status_code, other.status_code
+
+        assert asyncio.run(scenario()) == (200, 503, 200)
