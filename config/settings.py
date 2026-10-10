@@ -70,8 +70,18 @@ if DEBUG:
     staticfiles_index = INSTALLED_APPS.index("django.contrib.staticfiles")
     INSTALLED_APPS.insert(staticfiles_index, "whitenoise.runserver_nostatic")
 
+# Rolling-deploy connection draining (see config/drain.py). The health path is
+# what the edge proxy and the container health check probe; it must match the
+# platform's web_health_check_path. Hooks are dotted paths to
+# ``async def hook(deadline: float) -> None`` callables that an app package
+# registers (through its api_core.settings entry point) to hand long-lived
+# connections off before the process exits.
+WEB_HEALTH_CHECK_PATH = os.environ.get("WEB_HEALTH_CHECK_PATH", "/api/csrf/")
+WEB_DRAIN_HOOKS: list[str] = []
+
 MIDDLEWARE = [
     "config.sentry.track_request_task",
+    "config.drain.DrainingHealthMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
