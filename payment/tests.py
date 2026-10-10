@@ -56,7 +56,9 @@ TEST_SUBSCRIPTION_TIERS = {
 
 
 def test_portal_return_route_label_never_retains_path_secrets():
-    assert portal_return_route_label("https://app.openbase.cloud/settings/") == "settings"
+    assert (
+        portal_return_route_label("https://app.openbase.cloud/settings/") == "settings"
+    )
     assert (
         portal_return_route_label(
             "https://app.openbase.cloud/account/reset/secret-reset-token"
@@ -234,6 +236,176 @@ def test_same_second_incomplete_event_cannot_revoke_paid_subscription():
         event_id="evt_incomplete",
         event_created=100,
         subscription_object=_stripe_object("sub_race", "incomplete"),
+    )
+
+    assert result == "ignored_stale"
+    assert Subscription.objects.get(account=account).is_active()
+
+
+def test_unpaid_stripe_webhook_logs_access_revoked_not_ignored():
+    _user, account, _subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=30),
+        platform_data={"id": "sub_unpaid"},
+    )
+    subscription_object = _stripe_object("sub_unpaid", "paused")
+    subscription_object["customer"] = account.customer_id
+    event = SimpleNamespace(
+        id="evt_paused",
+        created=100,
+        type="customer.subscription.updated",
+        data=SimpleNamespace(object=subscription_object),
+    )
+
+    with (
+        patch("payment.views.stripe.Webhook.construct_event", return_value=event),
+        patch("payment.views.notify_analytics_event"),
+        patch("payment.views.run_subscription_cancellation_hooks") as hooks,
+        patch("payment.views.logger") as logger,
+    ):
+        response = StripeWebhookView.as_view()(_webhook_request())
+
+    assert response.status_code == 200
+    hooks.assert_not_called()
+    logger.info.assert_called_once_with(
+        "Stripe subscription unpaid; access revoked",
+        account_id=account.pk,
+        event_type="customer.subscription.updated",
+        stripe_status="paused",
+    )
+
+
+def _renewal_periods():
+    """A paid month that ended an hour ago and the unpaid month after it."""
+    paid_through = timezone.now().replace(microsecond=0) - timedelta(hours=1)
+    return paid_through, paid_through + timedelta(days=30)
+
+
+def _apply_failed_renewal(account, *, past_due_event_created=300):
+    """Stripe's event sequence for a renewal whose card fails: the paid
+    month, the period rollover (still ``active``, period already advanced),
+    then ``past_due`` once the renewal invoice's payment attempt fails."""
+    paid_through, unpaid_through = _renewal_periods()
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_paid_month",
+        event_created=100,
+        subscription_object={
+            **_stripe_object("sub_renewal", "active"),
+            "current_period_start": int(
+                (paid_through - timedelta(days=30)).timestamp()
+            ),
+            "current_period_end": int(paid_through.timestamp()),
+        },
+    )
+    rollover = {
+        **_stripe_object("sub_renewal", "active"),
+        "current_period_start": int(paid_through.timestamp()),
+        "current_period_end": int(unpaid_through.timestamp()),
+    }
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_rollover",
+        event_created=200,
+        subscription_object=rollover,
+    )
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_past_due",
+        event_created=past_due_event_created,
+        subscription_object={**rollover, "status": "past_due"},
+    )
+    return result, paid_through, unpaid_through
+
+
+def test_past_due_renewal_holds_access_at_the_last_paid_period():
+    user = get_user_model().objects.create_user(email="past-due@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result, paid_through, _unpaid_through = _apply_failed_renewal(account)
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "past_due"
+    assert subscription.expiration_date == paid_through
+    assert not subscription.is_active()
+    # Not terminal: Stripe can still move it back to active.
+    assert subscription.stripe_event_terminal is False
+    assert subscription.stripe_terminal_cleanup_completed is True
+
+
+@override_settings(OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS=True)
+def test_past_due_renewal_keeps_access_when_the_deployment_grants_it():
+    user = get_user_model().objects.create_user(email="past-due-ok@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result, _paid_through, unpaid_through = _apply_failed_renewal(account)
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "synced"
+    assert subscription.expiration_date == unpaid_through
+    assert subscription.is_active()
+
+
+def test_past_due_without_a_stored_subscription_grants_no_access():
+    user = get_user_model().objects.create_user(email="past-due-new@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_past_due",
+        event_created=100,
+        subscription_object=_stripe_object("sub_unknown", "past_due"),
+    )
+
+    assert result == "past_due"
+    assert not Subscription.objects.get(account=account).is_active()
+
+
+@pytest.mark.parametrize("paid_event_created", [300, 301])
+def test_past_due_then_successful_retry_regrants_access(paid_event_created):
+    user = get_user_model().objects.create_user(email="retried@example.com")
+    account = Account.objects.get(user_owner=user)
+    _result, paid_through, unpaid_through = _apply_failed_renewal(account)
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_retry_paid",
+        event_created=paid_event_created,
+        subscription_object={
+            **_stripe_object("sub_renewal", "active"),
+            "current_period_start": int(paid_through.timestamp()),
+            "current_period_end": int(unpaid_through.timestamp()),
+        },
+    )
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "synced"
+    assert subscription.expiration_date == unpaid_through
+    assert subscription.is_active()
+
+
+def test_same_second_past_due_event_cannot_revoke_a_paid_retry():
+    user = get_user_model().objects.create_user(email="retry-race@example.com")
+    account = Account.objects.get(user_owner=user)
+    paid = _stripe_object("sub_retry_race", "active")
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_retry_paid",
+        event_created=300,
+        subscription_object=paid,
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_past_due",
+        event_created=300,
+        subscription_object={**paid, "status": "past_due"},
     )
 
     assert result == "ignored_stale"
