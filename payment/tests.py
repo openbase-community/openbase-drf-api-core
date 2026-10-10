@@ -110,6 +110,104 @@ def test_older_stripe_event_cannot_resurrect_terminal_subscription():
     assert subscription.stripe_event_terminal is True
 
 
+def _stripe_object(sub_id, status):
+    return {
+        "id": sub_id,
+        "customer": "cus_" + sub_id,
+        "status": status,
+        "current_period_end": int((timezone.now() + timedelta(days=30)).timestamp()),
+        "items": {"data": [{"price": {"product": "prod_pro"}}]},
+    }
+
+
+@pytest.mark.parametrize("status", ["incomplete", "paused"])
+def test_unpaid_stripe_status_grants_no_access(status):
+    user = get_user_model().objects.create_user(email=f"{status}@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id=f"evt_{status}",
+        event_created=100,
+        subscription_object=_stripe_object(f"sub_{status}", status),
+    )
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "no_access"
+    assert not subscription.is_active()
+    assert subscription.stripe_event_terminal is False
+
+
+def test_unpaid_stripe_status_revokes_previously_active_subscription():
+    user = get_user_model().objects.create_user(email="paused@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_active",
+        event_created=100,
+        subscription_object=_stripe_object("sub_paused", "active"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_paused",
+        event_created=200,
+        subscription_object=_stripe_object("sub_paused", "paused"),
+    )
+
+    assert result == "no_access"
+    assert not Subscription.objects.get(account=account).is_active()
+
+
+def test_incomplete_then_paid_subscription_becomes_active():
+    user = get_user_model().objects.create_user(email="paid-later@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_incomplete",
+        event_created=100,
+        subscription_object=_stripe_object("sub_paid_later", "incomplete"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_active",
+        event_created=101,
+        subscription_object=_stripe_object("sub_paid_later", "active"),
+    )
+
+    assert result == "synced"
+    assert Subscription.objects.get(account=account).is_active()
+
+
+def test_same_second_incomplete_event_cannot_revoke_paid_subscription():
+    user = get_user_model().objects.create_user(email="race@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_active",
+        event_created=100,
+        subscription_object=_stripe_object("sub_race", "active"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_incomplete",
+        event_created=100,
+        subscription_object=_stripe_object("sub_race", "incomplete"),
+    )
+
+    assert result == "ignored_stale"
+    assert Subscription.objects.get(account=account).is_active()
+
+
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
