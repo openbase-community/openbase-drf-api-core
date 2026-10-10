@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 
+from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings
 from django.http import HttpResponse
 
@@ -36,14 +37,39 @@ class DrainingHealthMiddleware:
 
     Everything else keeps being served normally: in-flight requests and
     long-lived websockets finish on this process, only new routing moves.
+
+    Async-capable on purpose: a sync-only middleware in the ASGI stack makes
+    Django run every inner middleware and view through one thread-sensitive
+    worker thread, which serialises the whole API (and starves the health
+    probes it is meant to answer).
     """
+
+    sync_capable = True
+    async_capable = True
 
     def __init__(self, get_response):
         self.get_response = get_response
+        if iscoroutinefunction(get_response):
+            markcoroutinefunction(self)
 
     def __call__(self, request):
-        if is_draining() and request.path == settings.WEB_HEALTH_CHECK_PATH:
-            return HttpResponse(
-                "draining", status=503, content_type="text/plain; charset=utf-8"
-            )
+        if iscoroutinefunction(self.get_response):
+            return self._async_call(request)
+        if _health_probe_while_draining(request):
+            return _draining_response()
         return self.get_response(request)
+
+    async def _async_call(self, request):
+        if _health_probe_while_draining(request):
+            return _draining_response()
+        return await self.get_response(request)
+
+
+def _health_probe_while_draining(request) -> bool:
+    return is_draining() and request.path == settings.WEB_HEALTH_CHECK_PATH
+
+
+def _draining_response() -> HttpResponse:
+    return HttpResponse(
+        "draining", status=503, content_type="text/plain; charset=utf-8"
+    )
