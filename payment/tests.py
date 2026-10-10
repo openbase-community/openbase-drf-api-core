@@ -110,6 +110,136 @@ def test_older_stripe_event_cannot_resurrect_terminal_subscription():
     assert subscription.stripe_event_terminal is True
 
 
+def _stripe_object(sub_id, status):
+    return {
+        "id": sub_id,
+        "customer": "cus_" + sub_id,
+        "status": status,
+        "current_period_end": int((timezone.now() + timedelta(days=30)).timestamp()),
+        "items": {"data": [{"price": {"product": "prod_pro"}}]},
+    }
+
+
+@pytest.mark.parametrize("status", ["incomplete", "paused"])
+def test_unpaid_stripe_status_grants_no_access(status):
+    user = get_user_model().objects.create_user(email=f"{status}@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id=f"evt_{status}",
+        event_created=100,
+        subscription_object=_stripe_object(f"sub_{status}", status),
+    )
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "no_access"
+    assert not subscription.is_active()
+    assert subscription.stripe_event_terminal is False
+
+
+def test_unpaid_stripe_status_revokes_previously_active_subscription():
+    user = get_user_model().objects.create_user(email="paused@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_active",
+        event_created=100,
+        subscription_object=_stripe_object("sub_paused", "active"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_paused",
+        event_created=200,
+        subscription_object=_stripe_object("sub_paused", "paused"),
+    )
+
+    assert result == "no_access"
+    assert not Subscription.objects.get(account=account).is_active()
+
+
+@pytest.mark.parametrize("paid_event_created", [100, 101])
+def test_incomplete_then_paid_subscription_becomes_active(paid_event_created):
+    user = get_user_model().objects.create_user(email="paid-later@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_incomplete",
+        event_created=100,
+        subscription_object=_stripe_object("sub_paid_later", "incomplete"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_active",
+        event_created=paid_event_created,
+        subscription_object=_stripe_object("sub_paid_later", "active"),
+    )
+
+    assert result == "synced"
+    assert Subscription.objects.get(account=account).is_active()
+
+
+@pytest.mark.parametrize("status", ["incomplete", "paused"])
+def test_unpaid_stripe_webhook_does_not_run_terminal_cleanup(status):
+    _user, account, subscription = _user_with_subscription(
+        expiration_delta=timedelta(days=30),
+        platform_data={"id": "sub_unpaid"},
+    )
+    subscription_object = _stripe_object("sub_unpaid", status)
+    subscription_object["customer"] = account.customer_id
+    event = SimpleNamespace(
+        id=f"evt_{status}",
+        created=100,
+        type="customer.subscription.updated",
+        data=SimpleNamespace(object=subscription_object),
+    )
+
+    with (
+        patch("payment.views.stripe.Webhook.construct_event", return_value=event),
+        patch("payment.views.notify_analytics_event"),
+        patch("payment.views.run_subscription_cancellation_hooks") as hooks,
+    ):
+        for _attempt in range(2):
+            response = StripeWebhookView.as_view()(_webhook_request())
+            assert response.status_code == 200
+
+    subscription.refresh_from_db()
+    assert not subscription.is_active()
+    assert not subscription.stripe_event_terminal
+    assert subscription.stripe_terminal_cleanup_completed
+    hooks.assert_not_called()
+
+
+def test_same_second_incomplete_event_cannot_revoke_paid_subscription():
+    user = get_user_model().objects.create_user(email="race@example.com")
+    account = Account.objects.get(user_owner=user)
+    apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.updated",
+        event_id="evt_active",
+        event_created=100,
+        subscription_object=_stripe_object("sub_race", "active"),
+    )
+
+    result = apply_stripe_subscription_event(
+        account=account,
+        event_type="customer.subscription.created",
+        event_id="evt_incomplete",
+        event_created=100,
+        subscription_object=_stripe_object("sub_race", "incomplete"),
+    )
+
+    assert result == "ignored_stale"
+    assert Subscription.objects.get(account=account).is_active()
+
+
 @override_settings(
     ALLOWED_HOSTS=["app.example.com"],
     OPENBASE_STRIPE_SUBSCRIPTION_PRICE_IDS=TEST_PRICE_IDS,
@@ -980,7 +1110,8 @@ def test_webhook_ignores_cancellation_for_untracked_subscription():
     hooks.assert_not_called()
 
 
-def test_webhook_ignores_sync_for_untracked_subscription_while_active():
+@pytest.mark.parametrize("status", ["active", "incomplete", "paused"])
+def test_webhook_ignores_sync_for_untracked_subscription_while_active(status):
     _user, _account, subscription = _user_with_subscription(
         expiration_delta=timedelta(days=30),
         platform_data={"id": "sub_current"},
@@ -991,6 +1122,7 @@ def test_webhook_ignores_sync_for_untracked_subscription_while_active():
             object={
                 "id": "sub_stray",
                 "customer": "cus_live_mode",
+                "status": status,
                 "current_period_end": int(
                     (timezone.now() + timedelta(days=7)).timestamp()
                 ),

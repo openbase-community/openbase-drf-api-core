@@ -40,6 +40,18 @@ def stripe_subscription_is_terminal(subscription_object) -> bool:
     )
 
 
+# Statuses where the subscription exists but nothing has been paid for the
+# current period: ``incomplete`` (first invoice not yet paid, e.g. a failed or
+# pending card) and ``paused`` (trial ended without a payment method). They
+# grant no access, but they are not terminal either: Stripe can still move
+# them to ``active``, so resources are not torn down.
+STRIPE_NO_ACCESS_STATUSES = frozenset({"incomplete", "paused"})
+
+
+def stripe_subscription_grants_access(subscription_object) -> bool:
+    return subscription_object.get("status") not in STRIPE_NO_ACCESS_STATUSES
+
+
 def apply_stripe_subscription_event(  # noqa: PLR0911
     *,
     account: Account,
@@ -80,6 +92,17 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
                 event_created == stored_subscription.stripe_event_created
                 and stored_subscription.stripe_event_terminal
                 and not incoming_terminal
+            ):
+                return "ignored_stale"
+            # Stripe stamps the incomplete "created" event and the "updated"
+            # event for its successful first payment with the same second, and
+            # delivery order is not guaranteed: never let the unpaid snapshot
+            # revoke a paid one from the same second.
+            if (
+                event_created == stored_subscription.stripe_event_created
+                and not incoming_terminal
+                and not stripe_subscription_grants_access(subscription_object)
+                and stored_subscription.is_active()
             ):
                 return "ignored_stale"
 
@@ -123,6 +146,19 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
             "customer.subscription.updated",
         }:
             return "ignored_event_type"
+        if not stripe_subscription_grants_access(subscription_object):
+            Subscription.objects.update_or_create(
+                account=account,
+                defaults={
+                    "subscription_type": stripe_subscription_product_id(
+                        subscription_object
+                    ),
+                    "expiration_date": timezone.now(),
+                    "platform_data": subscription_object,
+                    **ordering_defaults,
+                },
+            )
+            return "no_access"
         period_end = stripe_subscription_period_end_timestamp(subscription_object)
         if not period_end:
             return "missing_period_end"
