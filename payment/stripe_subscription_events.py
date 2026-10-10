@@ -133,14 +133,18 @@ def apply_stripe_subscription_event(  # noqa: PLR0911
             ):
                 return "ignored_stale"
             # Stripe stamps the incomplete "created" event and the "updated"
-            # event for its successful first payment with the same second (as
-            # it can the past_due event and the "updated" for a successful
-            # retry), and delivery order is not guaranteed: never let the
-            # unpaid snapshot revoke a paid one from the same second.
+            # event for its successful first payment with the same second, and
+            # delivery order is not guaranteed: never let that unpaid snapshot
+            # revoke a paid one from the same second. The shield is deliberately
+            # NOT extended to past_due: a stored active row is as likely to be
+            # the still-active period rollover (unpaid) as a paid retry, and
+            # nothing in the snapshot tells them apart, so the tie goes to the
+            # unpaid reading. The rare paid retry stamped in the same second
+            # as its past_due re-grants on the next subscription snapshot.
             if (
                 event_created == stored_subscription.stripe_event_created
                 and not incoming_terminal
-                and stripe_subscription_period_is_unpaid(subscription_object)
+                and not stripe_subscription_grants_access(subscription_object)
                 and stored_subscription.is_active()
             ):
                 return "ignored_stale"

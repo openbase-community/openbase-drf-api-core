@@ -388,10 +388,15 @@ def test_past_due_then_successful_retry_regrants_access(paid_event_created):
     assert subscription.is_active()
 
 
-def test_same_second_past_due_event_cannot_revoke_a_paid_retry():
+def test_same_second_past_due_event_still_holds_access():
+    """The tie goes to the unpaid reading: a stored active row stamped in the
+    same second may be the still-active period rollover, not a paid retry."""
     user = get_user_model().objects.create_user(email="retry-race@example.com")
     account = Account.objects.get(user_owner=user)
-    paid = _stripe_object("sub_retry_race", "active")
+    paid = {
+        **_stripe_object("sub_retry_race", "active"),
+        "current_period_start": int((timezone.now() - timedelta(days=1)).timestamp()),
+    }
     apply_stripe_subscription_event(
         account=account,
         event_type="customer.subscription.updated",
@@ -408,8 +413,22 @@ def test_same_second_past_due_event_cannot_revoke_a_paid_retry():
         subscription_object={**paid, "status": "past_due"},
     )
 
-    assert result == "ignored_stale"
-    assert Subscription.objects.get(account=account).is_active()
+    assert result == "past_due"
+    assert not Subscription.objects.get(account=account).is_active()
+
+
+def test_same_second_rollover_and_failed_renewal_never_grants_the_unpaid_month():
+    user = get_user_model().objects.create_user(email="rollover-race@example.com")
+    account = Account.objects.get(user_owner=user)
+
+    result, paid_through, _unpaid_through = _apply_failed_renewal(
+        account, past_due_event_created=200
+    )
+
+    subscription = Subscription.objects.get(account=account)
+    assert result == "past_due"
+    assert subscription.expiration_date <= paid_through
+    assert not subscription.is_active()
 
 
 @override_settings(
