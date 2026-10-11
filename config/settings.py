@@ -467,6 +467,13 @@ ACCOUNT_LOGIN_BY_CODE_ENABLED = True
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = os.environ.get(
     "ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED", "1"
 ).strip().lower() not in {"0", "false", "no", "off"}
+# Lets the verify-email page send a fresh code (POST auth/email/verify/resend).
+# allauth's default is 0 resends, which answers every resend with 409. Each
+# resend also draws on the "confirm_email" rate limit below, so a resend
+# inside that window is a 429.
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = int(
+    os.environ.get("ACCOUNT_EMAIL_VERIFICATION_MAX_RESENDS", "3")
+)
 ACCOUNT_CONFIRM_EMAIL_ON_GET = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True

@@ -119,3 +119,64 @@ def test_signup_verifies_with_an_emailed_code_and_signs_in(
     )
     assert verified.status_code == 200, verified.content
     assert verified.json()["meta"]["is_authenticated"] is True
+
+
+@pytest.mark.django_db
+def test_verification_code_can_be_resent_after_the_rate_limit_window(
+    client, settings, mailoutbox
+):
+    """The verify-email page's "send a new code": inside the confirm_email rate
+    limit window the resend is a 429; once the window has passed it sends a new
+    code that replaces the first one."""
+    settings.STRIPE_SECRET_KEY = ""
+    settings.ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+    site, _ = Site.objects.update_or_create(
+        domain="testserver", defaults={"name": "Openbase Test"}
+    )
+    SiteAttributes.objects.update_or_create(
+        site=site, defaults={"from_email": "team@openbase.cloud"}
+    )
+    settings.SITE_ID = site.id
+    code_pattern = r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b"
+
+    signup = client.post(
+        "/_allauth/app/v1/auth/signup",
+        data=json.dumps(
+            {
+                "email": "delivered+openbase-field-code-resend@resend.dev",
+                "password": "Quasar-Field-Test-732!",
+            }
+        ),
+        content_type="application/json",
+        HTTP_HOST="testserver",
+        REMOTE_ADDR="10.9.9.10",  # own bucket for the per-IP signup throttle
+    )
+    assert signup.status_code == 401
+    session_token = signup.json()["meta"]["session_token"]
+    first_code = re.findall(code_pattern, mailoutbox[0].body)[0]
+
+    def resend():
+        return client.post(
+            "/_allauth/app/v1/auth/email/verify/resend",
+            HTTP_HOST="testserver",
+            HTTP_X_SESSION_TOKEN=session_token,
+        )
+
+    assert resend().status_code == 429
+    assert len(mailoutbox) == 1
+
+    cache.clear()  # the 3-minute confirm_email window has passed
+    resent = resend()
+    assert resent.status_code == 200, resent.content
+    assert len(mailoutbox) == 2
+    new_code = re.findall(code_pattern, mailoutbox[1].body)[0]
+    assert new_code != first_code
+
+    verified = client.post(
+        "/_allauth/app/v1/auth/email/verify",
+        data=json.dumps({"key": new_code}),
+        content_type="application/json",
+        HTTP_HOST="testserver",
+        HTTP_X_SESSION_TOKEN=session_token,
+    )
+    assert verified.status_code == 200, verified.content
