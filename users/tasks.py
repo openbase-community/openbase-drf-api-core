@@ -65,6 +65,15 @@ def send_sms(message, to_number):
     )
 
 
+def _apns_reason(response) -> str | None:
+    if not response.content:
+        return None
+    try:
+        return json.loads(response.content).get("reason")
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return None
+
+
 @broker.task
 async def send_apn(user_id, message, data: dict | None = None):
     user = await User.objects.aget(id=user_id)
@@ -92,12 +101,23 @@ async def send_apn(user_id, message, data: dict | None = None):
     if response.status_code < 400:
         return
 
-    reason = None
-    if response.content:
-        try:
-            reason = json.loads(response.content).get("reason")
-        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-            reason = None
+    reason = _apns_reason(response)
+    if reason == "BadDeviceToken":
+        # A Debug build registers a sandbox token, a TestFlight or App Store
+        # build a production one, and the token does not say which. APNs
+        # rejects a token sent to the other gateway as BadDeviceToken, so try
+        # that gateway before treating the token as dead.
+        response = await send_apns_request(
+            token=token,
+            payload=payload,
+            push_type="alert",
+            topic=bundle_id,
+            expiration=0,
+            sandbox=not settings.NOTIFICATIONS_SANDBOX,
+        )
+        if response.status_code < 400:
+            return
+        reason = _apns_reason(response)
     if response.status_code in {400, 410} and reason in INVALID_APNS_TOKEN_REASONS:
         await UserAPNSToken.objects.filter(
             pk=token_instance.pk,

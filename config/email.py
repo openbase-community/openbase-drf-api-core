@@ -1,6 +1,6 @@
 import os
 from email.mime.base import MIMEBase
-from email.utils import parseaddr
+from email.utils import formataddr, getaddresses, parseaddr
 
 import resend
 from django.contrib.sites.models import Site
@@ -41,7 +41,29 @@ def is_filtered_email_address(email_address: str) -> bool:
 
 
 def format_from_email(display_name: str, from_email: str) -> str:
-    return f"{display_name} <{from_email}>"
+    parsed_addresses = getaddresses([from_email])
+    if len(parsed_addresses) != 1:
+        msg = "From email must contain exactly one address."
+        raise ValueError(msg)
+
+    configured_display_name, address = parsed_addresses[0]
+    address = address.strip()
+    if not address:
+        msg = "From email address is required."
+        raise ValueError(msg)
+
+    local_part, separator, domain = address.rpartition("@")
+    if (
+        not separator
+        or not local_part
+        or not domain
+        or any(character.isspace() for character in address)
+        or any(character in address for character in "<>")
+    ):
+        msg = "From email address is invalid."
+        raise ValueError(msg)
+
+    return formataddr((configured_display_name or display_name, address))
 
 
 def get_effective_site_from_email(site: Site, site_attributes: SiteAttributes) -> str:

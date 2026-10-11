@@ -91,3 +91,26 @@ def test_using_a_token_retires_lost_siblings(user, session, initial_refresh_toke
 def test_invalid_token_is_rejected(db):
     strategy = OpenbaseJWTTokenStrategy()
     assert strategy.refresh_token("not-a-token") is None
+
+
+def test_refresh_rejects_payload_without_authenticated_user(
+    monkeypatch, session, initial_refresh_token
+):
+    monkeypatch.setattr(
+        internal,
+        "validate_refresh_token",
+        lambda _refresh_token: (None, session, {"jti": "orphaned-session"}),
+    )
+
+    def create_access_token_for_missing_user(*_args, **_kwargs):
+        msg = "access token creation should not run without a user"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        internal,
+        "create_access_token",
+        create_access_token_for_missing_user,
+    )
+
+    strategy = OpenbaseJWTTokenStrategy()
+    assert strategy.refresh_token(initial_refresh_token) is None

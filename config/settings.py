@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from config.installed_apps import get_installed_apps, load_all_package_settings
 from config.logging import get_logging_config
-from config.sentry import filter_expected_websocket_disconnects
+from config.sentry import filter_expected_sentry_events
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -70,7 +70,18 @@ if DEBUG:
     staticfiles_index = INSTALLED_APPS.index("django.contrib.staticfiles")
     INSTALLED_APPS.insert(staticfiles_index, "whitenoise.runserver_nostatic")
 
+# Rolling-deploy connection draining (see config/drain.py). The health path is
+# what the edge proxy and the container health check probe; it must match the
+# platform's web_health_check_path. Hooks are dotted paths to
+# ``async def hook(deadline: float) -> None`` callables that an app package
+# registers (through its api_core.settings entry point) to hand long-lived
+# connections off before the process exits.
+WEB_HEALTH_CHECK_PATH = os.environ.get("WEB_HEALTH_CHECK_PATH", "/api/csrf/")
+WEB_DRAIN_HOOKS: list[str] = []
+
 MIDDLEWARE = [
+    "config.sentry.track_request_task",
+    "config.drain.DrainingHealthMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -371,6 +382,14 @@ CORS_ALLOW_CREDENTIALS = True
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+# Whether a ``past_due`` Stripe subscription (its renewal invoice failed and
+# Smart Retries are still running) keeps paid access through the unpaid
+# period. Stripe advances the period before the renewal is paid, so granting
+# it means 1-3 weeks of paid caps for free whenever a card fails. Off by
+# default: access ends with the last paid period until a retry succeeds.
+OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS = (
+    os.environ.get("OPENBASE_STRIPE_PAST_DUE_GRANTS_ACCESS", "0") == "1"
+)
 # The pricing menu is supplied by the consuming app's api_core.settings
 # entry-point module (see payment/tiers.py). Empty means "no tiers configured":
 # checkout rejects every tier until an app provides its table.
@@ -413,27 +432,6 @@ ADMIN_SUFFIX = os.environ["DJANGO_ADMIN_SUFFIX"] if not DEBUG else ""
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 
 
-def is_expected_client_disconnect_event(event):
-    exception_values = (event.get("exception") or {}).get("values") or []
-    if not any(value.get("type") == "CancelledError" for value in exception_values):
-        return False
-
-    request = event.get("request") or {}
-    request_url = request.get("url")
-    request_path = urlparse(request_url).path if isinstance(request_url, str) else ""
-    transaction = event.get("transaction")
-    paths = {
-        path for path in (request_path, transaction) if isinstance(path, str) and path
-    }
-    return "/api/csrf/" in paths
-
-
-def filter_expected_sentry_events(event, hint):
-    if is_expected_client_disconnect_event(event):
-        return None
-    return filter_expected_websocket_disconnects(event, hint)
-
-
 if SENTRY_DSN:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
@@ -462,6 +460,20 @@ if ACCOUNT_EMAIL_VERIFICATION not in {"mandatory", "optional", "none"}:
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_USER_MODEL_EMAIL_FIELD = "email"
 ACCOUNT_LOGIN_BY_CODE_ENABLED = True
+# Signup verifies the address with a code typed into the client instead of a
+# link: a phone-only user (mobile app + hosted workspace, no computer) never
+# has to leave the app for a browser. The web app and both mobile auth
+# clients read `email_verification_by_code_enabled` from the headless config.
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = os.environ.get(
+    "ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
+# Lets the verify-email page send a fresh code (POST auth/email/verify/resend).
+# allauth's default is 0 resends, which answers every resend with 409. Each
+# resend also draws on the "confirm_email" rate limit below, so a resend
+# inside that window is a 429.
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = int(
+    os.environ.get("ACCOUNT_EMAIL_VERIFICATION_MAX_RESENDS", "3")
+)
 ACCOUNT_CONFIRM_EMAIL_ON_GET = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_LOGIN_ON_PASSWORD_RESET = True

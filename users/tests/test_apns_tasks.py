@@ -157,3 +157,32 @@ def test_send_apn_keeps_token_for_non_token_rejection():
         response_content='{"reason":"InvalidProviderToken"}',
         user_id=user.pk,
     )
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(NOTIFICATIONS_SANDBOX=False, APPLE_BUNDLE_ID="com.example.app")
+def test_send_apn_retries_a_bad_token_on_the_other_gateway():
+    """A Debug build's sandbox token is BadDeviceToken on the production
+    gateway; it must be delivered through the sandbox, not deleted."""
+    with patch(
+        "users.models.stripe.Customer.create",
+        return_value=SimpleNamespace(id="cus_test"),
+    ):
+        user = get_user_model().objects.create_user(email="sandbox-apn@example.com")
+    token = UserAPNSToken.objects.create(user=user, token="sandbox-device-token")
+    mocked_send = AsyncMock(
+        side_effect=[
+            SimpleNamespace(status_code=400, content=b'{"reason":"BadDeviceToken"}'),
+            SimpleNamespace(status_code=200, content=b""),
+        ]
+    )
+
+    with patch("users.tasks.send_apns_request", mocked_send):
+        async_to_sync(send_apn.original_func)(
+            user.pk,
+            {"title": "Dottie", "body": "Review is ready"},
+        )
+
+    assert UserAPNSToken.objects.filter(pk=token.pk).exists()
+    assert "sandbox" not in mocked_send.await_args_list[0].kwargs
+    assert mocked_send.await_args_list[1].kwargs["sandbox"] is True
