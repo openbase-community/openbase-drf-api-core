@@ -35,6 +35,12 @@ class Team(models.Model):
         return f"team_{slug.replace('-', '_')}"
 
     @property
+    def users(self):
+        return get_user_model().objects.filter(
+            team_memberships__team=self, is_active=True
+        )
+
+    @property
     def billable_users(self):
         return self.users
 
@@ -46,6 +52,30 @@ class Team(models.Model):
 
     def get_email(self):
         return self.owner.email if self.owner else None
+
+
+class TeamMember(models.Model):
+    """🤝 A user's membership in a team (the owner is a member too)."""
+
+    team = models.ForeignKey(
+        Team,
+        related_name="members",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        get_user_model(),
+        related_name="team_memberships",
+        on_delete=models.CASCADE,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["team", "user"], name="unique_team_member"),
+        ]
+
+    def __str__(self):
+        return f"{self.user} in {self.team}"
 
 
 def name_to_slug(name):
