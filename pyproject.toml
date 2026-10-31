@@ -124,7 +124,7 @@ ignore = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
-addopts = "--ignore=.git --ignore=data"
+addopts = "--ignore=.git --ignore=data -p config.pytest_plugin"
 markers = [
     "exploratory: mark a test as exploratory (run manually, not part of automated test suite)",
 ]
