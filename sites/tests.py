@@ -13,7 +13,7 @@ from django.urls import path
 from config.admin import site as dynamic_admin_site
 from contact.models import ContactSubmission
 from sites.models import SiteAttributes
-from sites.utils import _site_attributes_cache
+from sites.utils import _site_attributes_cache, get_current_site_attributes
 from sites.views import serve_index
 
 urlpatterns = [
@@ -329,7 +329,9 @@ def test_serve_index_returns_gateway_timeout_when_index_fetch_times_out(
         async def aset(self, key, value, timeout):
             return None
 
-    monkeypatch.setattr("sites.views.aget_current_site_attributes", current_site_attributes)
+    monkeypatch.setattr(
+        "sites.views.aget_current_site_attributes", current_site_attributes
+    )
     monkeypatch.setattr("sites.views.cache", Cache())
     monkeypatch.setattr("sites.views.httpx.AsyncClient", lambda: Client())
 
@@ -351,3 +353,19 @@ class _AdminTestUser:
 
     def has_perm(self, perm, obj=None):
         return True
+
+
+@override_settings(ALLOWED_HOSTS=["new.example.com"], SITE_ID=None)
+def test_site_attributes_lookup_does_not_cache_a_miss(rf):
+    request = rf.get("/", HTTP_HOST="new.example.com")
+    assert get_current_site_attributes(request) is None
+
+    site = Site.objects.create(domain="new.example.com", name="New Example")
+    attributes = SiteAttributes.objects.create(
+        site=site, from_email="team@new.example.com"
+    )
+
+    # The row created after the first lookup is visible to the same process
+    # without a restart: only hits are cached.
+    assert get_current_site_attributes(request) == attributes
+    assert get_current_site_attributes(request) == attributes

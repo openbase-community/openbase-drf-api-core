@@ -19,10 +19,12 @@ def get_current_site_attributes(request) -> SiteAttributes | None:
         return _site_attributes_cache[host]
 
     # Get site and its attributes
+    # Only hits are cached: a host whose Site or SiteAttributes row does not
+    # exist yet (a freshly provisioned environment) must become visible as soon
+    # as the row is created, without restarting every web process.
     try:
         site = get_current_site(request)
     except Site.DoesNotExist:
-        _site_attributes_cache[host] = None
         return None
     if not isinstance(
         site, Site
@@ -31,11 +33,10 @@ def get_current_site_attributes(request) -> SiteAttributes | None:
 
     try:
         attributes = SiteAttributes.objects.get(site=site)
-        _site_attributes_cache[host] = attributes
-        return attributes
     except SiteAttributes.DoesNotExist:
-        _site_attributes_cache[host] = None
         return None
+    _site_attributes_cache[host] = attributes
+    return attributes
 
 
 async def aget_current_site_attributes(request) -> SiteAttributes | None:
@@ -52,7 +53,6 @@ async def aget_current_site_attributes(request) -> SiteAttributes | None:
     try:
         site = await sync_to_async(get_current_site)(request)
     except Site.DoesNotExist:
-        _site_attributes_cache[host] = None
         return None
     if not isinstance(
         site, Site
@@ -61,8 +61,7 @@ async def aget_current_site_attributes(request) -> SiteAttributes | None:
 
     try:
         attributes = await SiteAttributes.objects.aget(site=site)
-        _site_attributes_cache[host] = attributes
-        return attributes
     except SiteAttributes.DoesNotExist:
-        _site_attributes_cache[host] = None
         return None
+    _site_attributes_cache[host] = attributes
+    return attributes
