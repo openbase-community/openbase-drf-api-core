@@ -215,7 +215,9 @@ else:
     }
 
 STATICFILES_DIRS = [BASE_DIR / "static"]
-EMAIL_BACKEND = "config.email.ResendEmailBackend"
+# Resend by default; a deployment without a Resend key (staging, QA) sets
+# EMAIL_BACKEND to Django's console or locmem backend through its config vars.
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "config.email.ResendEmailBackend")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
