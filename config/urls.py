@@ -32,6 +32,7 @@ admin_suffix = f"-{settings.ADMIN_SUFFIX}" if not settings.DEBUG else ""
 urlpatterns = [
     path(f"admin{admin_suffix}/", dynamic_admin_site.urls),
     path(".well-known/jwks.json", jwks_view, name="jwks"),
+    path("api/csrf/", views.csrf_token, name="csrf-token"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "o/",

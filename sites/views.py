@@ -1,6 +1,7 @@
 import httpx
 from django.conf import settings
 from django.core.cache import cache
+from django.http import JsonResponse
 from django.http import HttpResponse
 from django.middleware.csrf import get_token
 
@@ -68,3 +69,7 @@ async def serve_index(request, resource):
     # Manually ensure a CSRF token is generated and set the CSRF cookie
     get_token(request)
     return response
+
+
+def csrf_token(request):
+    return JsonResponse({"csrfToken": get_token(request)})
