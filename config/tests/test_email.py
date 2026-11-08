@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
 from django.core.mail import EmailMessage
+from resend.exceptions import ResendError, ValidationError
 
 from config.email import (
+    RESEND_IDEMPOTENCY_KEY_HEADER,
     ResendEmailBackend,
     format_from_email,
     get_effective_site_from_email,
+    is_definite_send_rejection,
     is_filtered_email_address,
 )
 
@@ -165,3 +168,61 @@ def test_backend_removes_filtered_addresses_from_every_recipient_field(
     assert send_params["to"] == ["real-to@real-domain.com"]
     assert send_params["cc"] == ["real-cc@real-domain.com"]
     assert send_params["bcc"] == ["real-bcc@real-domain.com"]
+
+
+def test_backend_passes_idempotency_key_as_send_option_not_email_header(
+    monkeypatch,
+    mocker,
+):
+    monkeypatch.setenv("RESEND_API_KEY", "unused-test-key")
+    send = mocker.patch("config.email.resend.Emails.send")
+    email_message = EmailMessage(
+        subject="Deduplicated",
+        body="A retry of this send must not deliver a second copy.",
+        from_email="sender@real-domain.com",
+        to=["real-to@real-domain.com"],
+        headers={
+            RESEND_IDEMPOTENCY_KEY_HEADER: "notice/abc123/0",
+            "X-Entity-Ref-ID": "abc123",
+        },
+    )
+
+    sent_count = ResendEmailBackend().send_messages([email_message])
+
+    assert sent_count == 1
+    send_params, options = send.call_args.args
+    assert options == {"idempotency_key": "notice/abc123/0"}
+    assert send_params["headers"] == {"X-Entity-Ref-ID": "abc123"}
+
+
+def test_backend_sends_without_options_when_no_idempotency_key(monkeypatch, mocker):
+    monkeypatch.setenv("RESEND_API_KEY", "unused-test-key")
+    send = mocker.patch("config.email.resend.Emails.send")
+    email_message = EmailMessage(
+        subject="Plain",
+        body="No deduplication requested.",
+        from_email="sender@real-domain.com",
+        to=["real-to@real-domain.com"],
+    )
+
+    ResendEmailBackend().send_messages([email_message])
+
+    send_params, options = send.call_args.args
+    assert options is None
+    assert "headers" not in send_params
+
+
+def test_only_a_4xx_answer_is_a_definite_send_rejection():
+    refused = ValidationError(
+        message="Invalid `from` field.", error_type="validation_error", code=422
+    )
+    transport = ResendError(
+        code=500,
+        message="connection reset",
+        error_type="HttpClientError",
+        suggested_action="Request failed, please try again.",
+    )
+
+    assert is_definite_send_rejection(refused)
+    assert not is_definite_send_rejection(transport)
+    assert not is_definite_send_rejection(TimeoutError("no answer"))
