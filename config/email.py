@@ -7,6 +7,7 @@ from django.contrib.sites.models import Site
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.mail.message import EmailAttachment, EmailMessage
+from resend.exceptions import ResendError
 
 from sites.models import SiteAttributes
 from sites.utils import get_current_site_attributes
@@ -20,6 +21,27 @@ NON_DELIVERY_EMAIL_DOMAINS = frozenset(
     }
 )
 NON_DELIVERY_EMAIL_DOMAIN_SUFFIXES = (".test", ".invalid")
+
+# Set this header on an EmailMessage to have Resend deduplicate the send: a
+# retry carrying the same key within 24 hours returns the first send's result
+# instead of delivering a second copy. The backend passes the value as
+# Resend's idempotency key and never forwards it as an email header.
+RESEND_IDEMPOTENCY_KEY_HEADER = "Resend-Idempotency-Key"
+
+
+def is_definite_send_rejection(exc: BaseException) -> bool:
+    """Whether a failed send means Resend definitely did not accept the email.
+
+    True for a 4xx answer. The SDK reports transport failures and unreadable
+    responses as 5xx ``ResendError``s; after those, and after any other
+    exception, the email may or may not have been accepted, so a retry should
+    reuse its ``RESEND_IDEMPOTENCY_KEY_HEADER`` value.
+    """
+    return (
+        isinstance(exc, ResendError)
+        and str(exc.code).isdigit()
+        and 400 <= int(exc.code) < 500
+    )
 
 
 def is_non_delivery_email_domain(domain: str) -> bool:
@@ -120,8 +142,14 @@ class ResendEmailBackend(BaseEmailBackend):
             send_params = self._build_send_params(email_message)
             if not any(send_params.get(field) for field in ("to", "cc", "bcc")):
                 continue
+            idempotency_key = email_message.extra_headers.get(
+                RESEND_IDEMPOTENCY_KEY_HEADER
+            )
+            options: resend.Emails.SendOptions | None = (
+                {"idempotency_key": str(idempotency_key)} if idempotency_key else None
+            )
             try:
-                resend.Emails.send(send_params)
+                resend.Emails.send(send_params, options)
             except Exception:
                 if not self.fail_silently:
                     raise
@@ -152,10 +180,13 @@ class ResendEmailBackend(BaseEmailBackend):
             params["bcc"] = self._filter_recipients(email_message.bcc)
         if email_message.reply_to:
             params["reply_to"] = email_message.reply_to
-        if email_message.extra_headers:
-            params["headers"] = {
-                key: str(value) for key, value in email_message.extra_headers.items()
-            }
+        headers = {
+            key: str(value)
+            for key, value in email_message.extra_headers.items()
+            if key != RESEND_IDEMPOTENCY_KEY_HEADER
+        }
+        if headers:
+            params["headers"] = headers
         attachments = self._build_attachments(email_message)
         if attachments:
             params["attachments"] = attachments
