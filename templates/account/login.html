@@ -24,6 +24,9 @@
   </div>
   {% endif %}
 
+  {% if not password_auth_enabled %}
+  <p class="login-hint">{% trans "Enter your email address and we will send you a one-time sign-in code." %}</p>
+  {% endif %}
   <form class="login" method="POST" action="{% url 'account_login' %}">
     {% csrf_token %}
     {{ form.as_p }}
@@ -34,7 +37,9 @@
   </form>
 
   <div class="login-links">
+    {% if password_auth_enabled %}
     <a href="{% url 'account_reset_password' %}">{% trans "Forgot Password?" %}</a>
+    {% endif %}
     <a href="{{ signup_url }}">{% trans "Sign Up" %}</a>
   </div>
 </div>
