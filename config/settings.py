@@ -443,14 +443,61 @@ if SENTRY_DSN:
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0")),
     )
 
-# Add these settings near the authentication-related settings
+# Password authentication is retired. Accounts sign in with an emailed code or a
+# social provider; password hashes stay in the database untouched so a rollback
+# is a config flip (PASSWORD_AUTH_ENABLED=1), not a data restore. While retired:
+#   * config.allauth_adapter.AccountAdapter.authenticate refuses password
+#     credentials, which covers allauth's headless /auth/login and its classic
+#     /accounts/login/ form; config.admin.DynamicAdminSite.login never shows
+#     the admin's own password form;
+#   * PasswordAuthRetiredMiddleware answers the headless password endpoints
+#     (login, password reset, password change) with a clear error so every
+#     client shows users why instead of "wrong password";
+#   * signup collects only an email; the account is verified and signed in by
+#     code (ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED) and never gets a password.
+# AUTHENTICATION_BACKENDS stays as it was: Django stores the backend path in
+# every session and allauth's refresh tokens hang off those sessions, so
+# changing the list would sign every existing user out of the web, the apps and
+# the CLI.
+PASSWORD_AUTH_ENABLED = os.environ.get("PASSWORD_AUTH_ENABLED", "0") == "1"
+PASSWORD_AUTH_RETIRED_MESSAGE = os.environ.get(
+    "PASSWORD_AUTH_RETIRED_MESSAGE",
+    "Password sign-in has been retired. Sign in with an emailed code, or with "
+    "Google, Apple or GitHub.",
+)
 AUTHENTICATION_BACKENDS = (
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 )
+if PASSWORD_AUTH_ENABLED:
+    ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+else:
+    ACCOUNT_SIGNUP_FIELDS = ["email*"]
+    MIDDLEWARE.insert(
+        MIDDLEWARE.index("allauth.account.middleware.AccountMiddleware"),
+        "config.middlewares.PasswordAuthRetiredMiddleware",
+    )
+
+# The one-time notice the users.0003 data migration (and the
+# password_retirement_notice command) mails to every account that still signed
+# in with a password. The defaults name the Openbase deployment; another
+# deployment of api-core sets its own.
+PASSWORD_RETIREMENT_NOTICE_BRAND = os.environ.get(
+    "PASSWORD_RETIREMENT_NOTICE_BRAND", "Openbase"
+)
+PASSWORD_RETIREMENT_NOTICE_LOGIN_URL = os.environ.get(
+    "PASSWORD_RETIREMENT_NOTICE_LOGIN_URL", "https://app.openbase.cloud/account/login"
+)
+PASSWORD_RETIREMENT_NOTICE_SUPPORT_EMAIL = os.environ.get(
+    "PASSWORD_RETIREMENT_NOTICE_SUPPORT_EMAIL", "team@openbase.cloud"
+)
+# Set to 1 on a deployment whose database holds accounts that must not be
+# mailed (a QA copy of production, for example). DEBUG deployments never send.
+PASSWORD_RETIREMENT_NOTICE_SKIP = (
+    os.environ.get("PASSWORD_RETIREMENT_NOTICE_SKIP", "0") == "1"
+)
 
 # AllAuth settings
-ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_EMAIL_VERIFICATION = (
     os.environ.get("ACCOUNT_EMAIL_VERIFICATION", "mandatory").strip().lower()

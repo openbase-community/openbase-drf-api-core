@@ -69,6 +69,18 @@ openbase-deploy config unset openbase-api-core STRIPE_SECRET_KEY
 
 Do not commit generated tfvars, local deployment metadata, or secret values.
 
+## Passwordless authentication
+
+Password sign-in is retired. Accounts sign in with an emailed one-time code (`ACCOUNT_LOGIN_BY_CODE_ENABLED`) or a social provider; signup collects only an email and verifies it by code, so new accounts never get a password. The pieces, all in `config/`:
+
+- `allauth_adapter.AccountAdapter.authenticate` refuses password credentials, which closes allauth's headless `auth/login` and classic `/accounts/login/` while leaving the stored hashes untouched. `AUTHENTICATION_BACKENDS` is deliberately unchanged: every session records its backend path and the JWT refresh tokens hang off those sessions, so editing the list would sign every existing user out.
+- `middlewares.PasswordAuthRetiredMiddleware` answers the headless password endpoints (`auth/login`, `auth/password/*`, `account/password/change`) and the classic password-reset pages with a `password_auth_retired` error in allauth's error format, so installed clients show users what to do instead of "wrong password".
+- `admin.DynamicAdminSite.login` sends anonymous staff to the product login at `LOGIN_URL` (same host, same session cookie) and back to the admin page they asked for.
+
+`PASSWORD_AUTH_ENABLED=1` restores the previous behaviour (password logins accepted, email-and-password signup, no guard middleware) without a data change, for a rollback or a local setup that still relies on `ensure_dev_superuser`'s `DEV_SUPERUSER_PASSWORD`.
+
+The `users.0003_password_retirement_notice` data migration mails every active account that still has a usable password once, on the deploy that ships the change. It sends nothing with `DJANGO_DEBUG=1`, with `PASSWORD_RETIREMENT_NOTICE_SKIP=1` (for a deployment whose database is a copy of another's), or while `PASSWORD_AUTH_ENABLED=1`. The wording is configured by `PASSWORD_RETIREMENT_NOTICE_BRAND`, `PASSWORD_RETIREMENT_NOTICE_LOGIN_URL` and `PASSWORD_RETIREMENT_NOTICE_SUPPORT_EMAIL` (Openbase defaults). Preview who would receive it with `manage.py password_retirement_notice` (a dry run that prints counts) and re-send with `--send`.
+
 ## Field-test accounts
 
 **Field tests** are agent-driven, end-to-end tests that install the product clean-room in a VM and exercise production Openbase Cloud. A field test creates its throwaway user through the real product signup flow, receives the real allauth verification message through Resend's official testing-recipient mechanism, and completes normal email verification. It never uses a personal address or inbox.

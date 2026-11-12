@@ -5,6 +5,7 @@ from allauth.account.adapter import DefaultAccountAdapter
 from allauth.account.utils import user_display
 from allauth.core import context
 from allauth.headless.adapter import DefaultHeadlessAdapter
+from django.conf import settings
 
 from config.email import get_request_from_email
 from config.email_verification import user_has_verified_email
@@ -13,6 +14,19 @@ from config.email_verification import user_has_verified_email
 class AccountAdapter(DefaultAccountAdapter):
     def get_from_email(self) -> str:
         return get_request_from_email(context.request)
+
+    def authenticate(self, request, **credentials):
+        """Refuse every password login while password authentication is retired.
+
+        allauth's headless ``/auth/login`` and its classic login form both come
+        through here, so this one check closes them without touching the
+        authentication backends (whose paths live inside every existing
+        session). Login-by-code and social logins identify the user themselves
+        and never call this method. The stored hashes are left alone.
+        """
+        if "password" in credentials and not settings.PASSWORD_AUTH_ENABLED:
+            return None
+        return super().authenticate(request, **credentials)
 
 
 @dataclass

@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from asgiref.sync import (
     iscoroutinefunction,
@@ -8,14 +9,15 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.sites.models import SITE_CACHE, Site
 from django.contrib.sites.shortcuts import get_current_site
-from django.http import HttpResponse
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.utils.decorators import sync_and_async_middleware
 
 from config.email_verification import (
     ensure_user_email_verified,
     user_has_verified_email,
 )
+
+PASSWORD_AUTH_RETIRED_CODE = "password_auth_retired"  # noqa: S105
 
 
 class RequireVerifiedEmailMiddleware:
@@ -112,3 +114,66 @@ class AllowIframeMiddleware:
             response.headers["X-Frame-Options"] = "ALLOWALL"
 
         return response
+
+
+# Headless allauth endpoints that only make sense with password authentication.
+# ``auth/login`` is the password login (login-by-code lives under ``auth/code/``),
+# the rest manage the password itself.
+_HEADLESS_PASSWORD_PATH_RE = re.compile(
+    r"^/_allauth/(?:browser|app)/v1/"
+    r"(?P<endpoint>auth/login|auth/password/request|auth/password/reset|account/password/change)$"
+)
+# allauth's classic server-rendered views (mounted because HEADLESS_ONLY is off).
+# Its login page needs no guard: with no password in ACCOUNT_SIGNUP_FIELDS the
+# classic LoginForm drops the password field and a submit requests a sign-in
+# code instead.
+_CLASSIC_PASSWORD_PATHS = frozenset(
+    {
+        "/accounts/password/change/",
+        "/accounts/password/set/",
+        "/accounts/password/reset/",
+        "/accounts/password/reset/done/",
+    }
+)
+_CLASSIC_PASSWORD_PATH_PREFIXES = ("/accounts/password/reset/key/",)
+
+
+class PasswordAuthRetiredMiddleware:
+    """Answer password endpoints with an explicit "retired" error.
+
+    ``AccountAdapter.authenticate`` already makes every password login fail,
+    but through allauth that failure reads as "email or password not correct". Installed clients (web console, iOS, Android, the coder CLI's
+    ``--password-stdin``) render allauth's error format verbatim, so returning
+    the real reason in that format tells users what to do instead, and stops
+    password-reset mails that would set a password nobody can use.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        path = request.path
+        match = _HEADLESS_PASSWORD_PATH_RE.match(path)
+        if match:
+            return self._headless_error(
+                param="password" if match["endpoint"] == "auth/login" else None
+            )
+        if path in _CLASSIC_PASSWORD_PATHS or path.startswith(
+            _CLASSIC_PASSWORD_PATH_PREFIXES
+        ):
+            return HttpResponse(
+                settings.PASSWORD_AUTH_RETIRED_MESSAGE,
+                status=403,
+                content_type="text/plain; charset=utf-8",
+            )
+        return self.get_response(request)
+
+    @staticmethod
+    def _headless_error(param: str | None):
+        error = {
+            "message": settings.PASSWORD_AUTH_RETIRED_MESSAGE,
+            "code": PASSWORD_AUTH_RETIRED_CODE,
+        }
+        if param:
+            error["param"] = param
+        return JsonResponse({"status": 400, "errors": [error]}, status=400)
